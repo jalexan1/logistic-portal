@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Manual de Usuario · Portal de Despachos · Logistics and Services</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+
+  :root {
+    --green: #0F6E56;
+    --green-dark: #085041;
+    --green-light: #E1F5EE;
+    --green-mid: #C5DDD4;
+    --gray: #6B8F80;
+    --dark: #1a2e27;
+    --border: #D4E5DE;
+    --bg: #F7F9F8;
+    --white: #ffffff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--dark);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  /* ── HEADER ── */
+  .site-header {
+    background: var(--green);
+    color: white;
+    padding: 36px 48px 28px;
+    position: relative;
+  }
+  .site-header .brand { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 10px; }
+  .site-header h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: white; }
+  .site-header .subtitle { font-size: 15px; color: rgba(255,255,255,0.7); margin-top: 6px; font-style: italic; }
+  .site-header .version { position: absolute; top: 36px; right: 48px; font-size: 12px; color: rgba(255,255,255,0.5); }
+
+  /* ── LAYOUT ── */
+  .container { max-width: 900px; margin: 0 auto; padding: 40px 32px 80px; }
+
+  /* ── TOC ── */
+  .toc {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 40px;
+  }
+  .toc h2 { font-size: 13px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px; }
+  .toc ol { padding-left: 20px; }
+  .toc li { margin: 5px 0; }
+  .toc a { color: var(--green); text-decoration: none; font-size: 14px; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ── SECTIONS ── */
+  .section { margin-bottom: 52px; }
+
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--green);
+    color: white;
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin-bottom: 24px;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .section-title .num {
+    background: rgba(255,255,255,0.2);
+    border-radius: 6px;
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; flex-shrink: 0;
+  }
+
+  h3 { font-size: 15px; font-weight: 700; color: var(--green-dark); margin: 22px 0 10px; }
+
+  p { margin-bottom: 12px; color: var(--dark); }
+
+  /* ── TABLES ── */
+  .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); margin: 16px 0 24px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  thead tr { background: var(--green); color: white; }
+  thead th { padding: 11px 14px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.03em; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: #F9FDFC; }
+  tbody tr:nth-child(odd) { background: white; }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid #EBF5F1; vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  .tag-req { display: inline-block; background: var(--green-light); color: var(--green-dark); border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+  .tag-auto { display: inline-block; background: #F0F4FF; color: #4B6BCC; border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+
+  /* ── NOTES ── */
+  .note {
+    border-radius: 8px;
+    padding: 13px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .note-info { background: #EAF7F2; border-left: 4px solid var(--green); }
+  .note-warn { background: #FFFBEA; border-left: 4px solid #F0C040; }
+  .note-key  { background: #F0F4FF; border-left: 4px solid #4B6BCC; }
+
+  /* ── LISTS ── */
+  ul, ol { padding-left: 22px; margin: 10px 0 16px; }
+  li { margin: 6px 0; }
+
+  /* ── STEPS ── */
+  .steps { counter-reset: step; margin: 16px 0; }
+  .step {
+    display: flex; gap: 14px; align-items: flex-start;
+    margin-bottom: 12px;
+  }
+  .step-num {
+    counter-increment: step;
+    background: var(--green);
+    color: white;
+    border-radius: 50%;
+    width: 26px; height: 26px; min-width: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; margin-top: 2px;
+  }
+  .step-num::before { content: counter(step); }
+
+  /* ── FAQ ── */
+  .faq-item { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 12px; }
+  .faq-q { font-weight: 700; color: var(--green-dark); margin-bottom: 6px; font-size: 14.5px; }
+  .faq-a { font-size: 14px; color: var(--dark); }
+
+  /* ── FOOTER ── */
+  footer {
+    background: var(--green);
+    color: rgba(255,255,255,0.85);
+    text-align: center;
+    padding: 24px;
+    font-size: 13px;
+    margin-top: 60px;
+  }
+  footer strong { color: white; }
+
+  /* ── PRINT ── */
+  @media print {
+    .site-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .section-title { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    thead tr { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+
+  @media (max-width: 600px) {
+    .container { padding: 24px 16px 60px; }
+    .site-header { padding: 24px 20px 20px; }
+    .site-header .version { position: static; margin-top: 10px; }
+    .site-header h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="site-header">
+  <div class="brand">Logistics and Services</div>
+  <h1>Portal de Despachos</h1>
+  <div class="subtitle">Manual de Usuario — Guía completa de uso y funcionalidades</div>
+  <div class="version">Versión 1.0 · 2026</div>
+</div>
+
+<div class="container">
+
+  <!-- TOC -->
+  <div class="toc">
+    <h2>📋 Contenido</h2>
+    <ol>
+      <li><a href="#s1">Descripción general del portal</a></li>
+      <li><a href="#s2">Campos de Información del Envío</a></li>
+      <li><a href="#s3">Tabla de Líneas de Despacho</a></li>
+      <li><a href="#s4">Agregar líneas</a></li>
+      <li><a href="#s5">Duplicar línea</a></li>
+      <li><a href="#s6">Eliminar línea</a></li>
+      <li><a href="#s7">Validaciones automáticas</a></li>
+      <li><a href="#s8">Descargar el archivo .xlsx</a></li>
+      <li><a href="#s9">Número de solicitud y comportamiento</a></li>
+      <li><a href="#s10">Nueva solicitud y botón Limpiar</a></li>
+      <li><a href="#s11">Botón Manual</a></li>
+      <li><a href="#s12">Preguntas frecuentes</a></li>
+    </ol>
+  </div>
+
+  <!-- SECCIÓN 1 -->
+  <div class="section" id="s1">
+    <div class="section-title"><span class="num">1</span> Descripción General del Portal</div>
+    <p>El <strong>Portal de Despachos de Logistics and Services</strong> es una herramienta web diseñada para agilizar y estandarizar el proceso de ingreso de solicitudes de despacho. Permite registrar múltiples líneas de entrega, validar la información antes de generar el archivo y descargar la plantilla Excel lista para procesamiento.</p>
+    <h3>Características principales</h3>
+    <ul>
+      <li>Interfaz intuitiva y responsiva, compatible con computadores y dispositivos móviles.</li>
+      <li>Validación automática de campos obligatorios y detección de duplicados en tiempo real.</li>
+      <li>Autocompletado del nombre del destinatario al ingresar el NIT registrado en la base de datos.</li>
+      <li>Generación automática de fecha y número de solicitud único al momento de la descarga.</li>
+      <li>Exportación directa a archivo <code>.xlsx</code> sin necesidad de conexión a internet.</li>
+    </ul>
+  </div>
+
+  <!-- SECCIÓN 2 -->
+  <div class="section" id="s2">
+    <div class="section-title"><span class="num">2</span> Campos de Información del Envío</div>
+    <p>En la parte superior del formulario se encuentran los campos de encabezado. Los campos marcados con <strong>*</strong> son obligatorios para poder descargar el archivo.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Campo</th><th>Obligatorio</th><th>Descripción</th><th>Comportamiento</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Área solicitante</strong></td>
+            <td><span class="tag-req">Sí *</span></td>
+            <td>Área o departamento que genera el despacho.</td>
+            <td>Texto libre en mayúsculas automáticas.</td>
+          </tr>
+          <tr>
+            <td><strong>Fecha</strong></td>
+            <td><span class="tag-auto">Automático</span></td>
+            <td>Fecha y hora del momento actual.</td>
+            <td>Se genera automáticamente. Se congela al descargar el .xlsx.</td>
+          </tr>
+          <tr>
+            <td><strong>N° Solicitud</strong></td>
+            <td><span class="tag-auto">Automático</span></td>
+            <td>Número consecutivo único de la solicitud.</td>
+            <td>Aparece vacío hasta hacer clic en "Descargar .xlsx". Se asigna en ese momento y no cambia más.</td>
+          </tr>
+          <tr>
+            <td><strong>Solicitante</strong></td>
+            <td><span class="tag-req">Sí *</span></td>
+            <td>Nombre del funcionario que genera la solicitud.</td>
+            <td>Texto libre en mayúsculas automáticas.</td>
+          </tr>
+          <tr>
+            <td><strong>Correo electrónico</strong></td>
+            <td><span class="tag-req">Sí *</span></td>
+            <td>Correo de contacto del solicitante.</td>
+            <td>Debe contener <strong>@</strong>. Los espacios se eliminan automáticamente al escribir.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note note-info">
+      ℹ️ &nbsp;El <strong>N° Solicitud</strong> permanece vacío (—) hasta que se hace clic en "Descargar .xlsx". En ese momento se genera el número definitivo y la fecha/hora se congelan. Ningún cambio posterior afecta ese número hasta que se inicie una nueva solicitud.
+    </div>
+  </div>
+
+  <!-- SECCIÓN 3 -->
+  <div class="section" id="s3">
+    <div class="section-title"><span class="num">3</span> Tabla de Líneas de Despacho</div>
+    <p>La tabla de líneas es el corazón del formulario. Cada fila representa un ítem que será incluido en el archivo de despacho generado.</p>
+    <div class="note note-info">
+      📝 &nbsp;La primera fila que aparece al abrir el portal muestra <strong>datos de ejemplo en texto gris suavizado</strong> (placeholders). Esos datos <em>no se guardan automáticamente</em>; son solo una guía visual. Para usarla, haz clic en cada celda e ingresa tus datos reales. Los datos de esa primera línea de ejemplo son completamente reemplazables.
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Campo</th><th>Obligatorio</th><th>Descripción</th><th>Ejemplo</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Entrega</strong></td><td><span class="tag-req">Sí *</span></td><td>Número u orden de entrega (OC, número SAP, etc.)</td><td>OC500 / 501</td></tr>
+          <tr><td><strong>Destinatario (NIT)</strong></td><td><span class="tag-req">Sí *</span></td><td>NIT del cliente. Si está registrado en BD, el nombre se autocompleta automáticamente.</td><td>900313153</td></tr>
+          <tr><td><strong>Nombre destinatario</strong></td><td><span class="tag-req">Sí *</span></td><td>Razón social del destinatario. Puede ser autocompletado por el NIT.</td><td>SAMARA COSMETICS S.A.S</td></tr>
+          <tr><td><strong>Lugar</strong></td><td><span class="tag-req">Sí *</span></td><td>Ciudad o lugar de entrega del despacho.</td><td>MEDELLÍN</td></tr>
+          <tr><td><strong>Material</strong></td><td><span class="tag-req">Sí *</span></td><td>Código del material o producto a despachar.</td><td>770 / 771 / 772</td></tr>
+          <tr><td><strong>Cantidad</strong></td><td><span class="tag-req">Sí *</span></td><td>Cantidad numérica de unidades a despachar.</td><td>1000</td></tr>
+          <tr><td><strong>UM</strong></td><td>No</td><td>Unidad de medida. Valor por defecto: BUL.</td><td>BUL</td></tr>
+          <tr><td><strong>Ítem</strong></td><td>No</td><td>Número de ítem. Valor por defecto: 1001.</td><td>1001</td></tr>
+          <tr><td><strong>Bodega</strong></td><td>No</td><td>Código de bodega de origen. Valor por defecto: 021.</td><td>021</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Autocompletado de NIT</h3>
+    <p>Al ingresar un NIT registrado en la base de datos interna y presionar <strong>Tab</strong>, <strong>Enter</strong> o al salir del campo, el sistema autocompleta automáticamente el campo "Nombre destinatario". Si el NIT no está registrado, el campo queda disponible para ingreso manual.</p>
+  </div>
+
+  <!-- SECCIÓN 4 -->
+  <div class="section" id="s4">
+    <div class="section-title"><span class="num">4</span> Agregar Líneas de Despacho</div>
+    <p>El botón <strong>"+ Agregar línea"</strong> añade una nueva fila en blanco al final de la tabla. Antes de agregar una nueva línea, el sistema valida que la última fila existente esté completa.</p>
+    <h3>Reglas al agregar línea:</h3>
+    <ul>
+      <li>Si la última fila tiene campos obligatorios vacíos, se resaltan en rojo y aparece un mensaje de advertencia (toast).</li>
+      <li>Si la combinación <strong>Entrega + Material</strong> de la última fila ya existe en otra fila, se muestra un error de duplicado.</li>
+      <li>Solo cuando la última fila es válida, se añade la nueva línea en blanco.</li>
+      <li>En escritorio, el cursor se posiciona automáticamente en el primer campo de la nueva fila.</li>
+    </ul>
+  </div>
+
+  <!-- SECCIÓN 5 -->
+  <div class="section" id="s5">
+    <div class="section-title"><span class="num">5</span> Duplicar Línea</div>
+    <p>El botón <strong>⎘ (escritorio)</strong> o botón <strong>"Duplicar" (móvil)</strong> crea una copia de la fila seleccionada con una diferencia importante:</p>
+    <div class="note note-warn">
+      ⚠️ &nbsp;El campo <strong>Material se deja en blanco</strong> al duplicar. Esto evita que se genere un error de duplicado inmediato, ya que la llave de unicidad es <strong>Entrega + Material</strong>. El usuario debe ingresar el nuevo código de material para completar la fila.
+    </div>
+    <h3>Datos copiados al duplicar:</h3>
+    <p>Entrega, Destinatario (NIT), Nombre destinatario, Lugar, Cantidad, UM, Ítem, Bodega.</p>
+    <h3>Campo que se limpia:</h3>
+    <p><strong>Material</strong> — queda vacío para que el usuario ingrese el código correspondiente.</p>
+    <h3>Comportamiento en escritorio:</h3>
+    <p>El cursor se posiciona automáticamente en el campo Material de la nueva fila para agilizar el ingreso.</p>
+  </div>
+
+  <!-- SECCIÓN 6 -->
+  <div class="section" id="s6">
+    <div class="section-title"><span class="num">6</span> Eliminar Línea</div>
+    <p>El botón <strong>× (escritorio)</strong> o <strong>"Eliminar" (móvil)</strong> borra la fila correspondiente de la tabla.</p>
+    <ul>
+      <li>Si solo existe una fila y se elimina, se reemplaza automáticamente por una fila nueva en blanco (no es posible tener cero filas).</li>
+      <li>Al eliminar una fila, también se limpian automáticamente los errores de duplicado que pudieran estar asociados a ella.</li>
+    </ul>
+  </div>
+
+  <!-- SECCIÓN 7 -->
+  <div class="section" id="s7">
+    <div class="section-title"><span class="num">7</span> Validaciones Automáticas</div>
+    <p>El portal valida en dos momentos: <strong>en tiempo real</strong> (mientras el usuario escribe o interactúa) y <strong>al momento de descargar</strong>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Situación</th><th>Comportamiento del sistema</th><th>Acción recomendada</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Área solicitante vacío</strong></td><td>Campo en rojo + toast de advertencia</td><td>Completa el campo antes de descargar</td></tr>
+          <tr><td><strong>Solicitante vacío</strong></td><td>Campo en rojo + toast de advertencia</td><td>Completa el campo antes de descargar</td></tr>
+          <tr><td><strong>Correo sin @</strong></td><td>Campo en rojo + mensaje de error</td><td>Ingresa un correo electrónico válido con @</td></tr>
+          <tr><td><strong>Campo obligatorio vacío en fila</strong></td><td>Borde rojo en celda + panel de errores</td><td>Completa todos los campos marcados con *</td></tr>
+          <tr><td><strong>Entrega + Material duplicados</strong></td><td>Borde rojo en ambas celdas + toast</td><td>Cambia el material o la entrega para diferenciar</td></tr>
+          <tr><td><strong>NIT reconocido en BD</strong></td><td>Nombre autocompleta automáticamente</td><td>Sin acción requerida (informativo)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Panel de errores detallado</h3>
+    <p>Cuando existen errores en las líneas, aparece un panel rojo sobre la tabla que detalla fila por fila qué campos están incompletos o cuáles tienen combinaciones duplicadas. Este panel se actualiza automáticamente a medida que el usuario corrige los errores.</p>
+  </div>
+
+  <!-- SECCIÓN 8 -->
+  <div class="section" id="s8">
+    <div class="section-title"><span class="num">8</span> Descargar el Archivo .xlsx</div>
+    <p>Al hacer clic en el botón verde <strong>"Descargar .xlsx"</strong>, el sistema ejecuta los siguientes pasos en orden:</p>
+    <div class="steps">
+      <div class="step"><div class="step-num"></div><div>Sincroniza los NITs de todas las filas para asegurar que los nombres estén actualizados.</div></div>
+      <div class="step"><div class="step-num"></div><div>Valida los campos de encabezado: Área solicitante, Solicitante y Correo electrónico.</div></div>
+      <div class="step"><div class="step-num"></div><div>Valida todas las líneas de despacho: campos obligatorios y duplicados.</div></div>
+      <div class="step"><div class="step-num"></div><div>Si hay errores, los resalta y muestra un mensaje. La descarga <strong>NO procede</strong>.</div></div>
+      <div class="step"><div class="step-num"></div><div>Si todo es válido, genera el <strong>N° Solicitud definitivo</strong> y congela la fecha/hora.</div></div>
+      <div class="step"><div class="step-num"></div><div>Genera el archivo Excel (.xlsx) con la plantilla de despacho.</div></div>
+      <div class="step"><div class="step-num"></div><div>Descarga el archivo directamente en el equipo del usuario.</div></div>
+      <div class="step"><div class="step-num"></div><div>Muestra el popup de confirmación con el resumen de la solicitud.</div></div>
+    </div>
+    <div class="note note-key">
+      📁 &nbsp;<strong>Nombre del archivo generado:</strong><br/>
+      <code>despacho_[ÁREA]_[N°SOLICITUD].xlsx</code><br/>
+      Ejemplo: <code>despacho_PRUEBA6_2104261301.xlsx</code>
+    </div>
+    <h3>Popup de confirmación</h3>
+    <p>Tras la descarga exitosa aparece un popup verde con el resumen de la solicitud: N° de solicitud, área, fecha y solicitante. Desde este popup se puede <strong>cerrar</strong> la pantalla o hacer clic en <strong>"Nueva solicitud"</strong> para iniciar un nuevo proceso.</p>
+  </div>
+
+  <!-- SECCIÓN 9 -->
+  <div class="section" id="s9">
+    <div class="section-title"><span class="num">9</span> Número de Solicitud y Comportamiento</div>
+    <p>El N° Solicitud es un consecutivo generado automáticamente a partir de la fecha y hora del sistema en el momento exacto de la descarga.</p>
+    <div class="note note-key">
+      🔢 &nbsp;<strong>Formato:</strong> <code>DDMMAAHHMI</code> (día, mes, año abreviado, hora, minuto)<br/>
+      <strong>Ejemplo:</strong> <code>2104261301</code> = 21 de abril de 2026 a las 13:01
+    </div>
+    <h3>Reglas del número de solicitud:</h3>
+    <ul>
+      <li>No aparece hasta que el usuario hace clic en "Descargar .xlsx".</li>
+      <li>Una vez generado, es <strong>estático</strong>. No se modifica aunque el usuario no cierre la pantalla.</li>
+      <li>La fecha y hora también se congelan en ese mismo momento.</li>
+      <li>Solo se genera un nuevo número al iniciar una nueva solicitud.</li>
+      <li>Cada descarga produce un número único basado en la marca de tiempo.</li>
+    </ul>
+  </div>
+
+  <!-- SECCIÓN 10 -->
+  <div class="section" id="s10">
+    <div class="section-title"><span class="num">10</span> Nueva Solicitud y Botón Limpiar</div>
+    <p>Existen dos maneras de iniciar una nueva solicitud:</p>
+    <h3>Desde el popup de confirmación:</h3>
+    <p>Hacer clic en <strong>"Nueva solicitud"</strong> dentro del popup que aparece tras la descarga exitosa. Limpia todos los campos y reinicia el ciclo.</p>
+    <h3>Desde el botón Limpiar:</h3>
+    <ul>
+      <li>El botón <strong>"Limpiar"</strong> (parte inferior izquierda) limpia todos los campos del formulario.</li>
+      <li>Si hay datos ingresados, solicita confirmación antes de limpiar.</li>
+    </ul>
+    <div class="note note-warn">
+      ⚠️ &nbsp;Al iniciar una nueva solicitud o usar Limpiar, el N° Solicitud vuelve a quedar vacío (—) hasta la próxima descarga. La fecha/hora se actualizan en tiempo real nuevamente.
+    </div>
+  </div>
+
+  <!-- SECCIÓN 11 -->
+  <div class="section" id="s11">
+    <div class="section-title"><span class="num">11</span> Botón Manual</div>
+    <p>En la esquina superior derecha del portal, junto al contador de líneas, se encuentra el botón <strong>Manual</strong> (ícono de libro). Al hacer clic, descarga este documento directamente en el equipo del usuario.</p>
+    <ul>
+      <li>Disponible en todo momento durante el uso del portal.</li>
+      <li>No requiere ninguna acción previa ni validación.</li>
+      <li>Se descarga en formato HTML, que abre directamente en cualquier navegador.</li>
+    </ul>
+  </div>
+
+  <!-- SECCIÓN 12 -->
+  <div class="section" id="s12">
+    <div class="section-title"><span class="num">12</span> Preguntas Frecuentes</div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿Puedo editar el N° Solicitud manualmente?</div>
+      <div class="faq-a">No. El número de solicitud es generado automáticamente por el sistema y no puede modificarse. Su valor depende de la fecha y hora exacta de la descarga.</div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿El archivo se envía automáticamente a algún servidor?</div>
+      <div class="faq-a">No. El archivo .xlsx se genera y descarga localmente en tu equipo. No se transmite ningún dato a través de internet durante el proceso de descarga.</div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿Qué pasa si el NIT no aparece en la base de datos?</div>
+      <div class="faq-a">El campo "Nombre destinatario" quedará vacío para que el usuario lo complete manualmente. Cualquier nombre ingresado manualmente se respetará si el NIT no coincide con ningún registro.</div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿Puedo tener dos filas con la misma Entrega pero diferente Material?</div>
+      <div class="faq-a">Sí. La validación de duplicado aplica sobre la combinación Entrega + Material juntos. Dos filas con la misma Entrega pero diferente Material son completamente válidas.</div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿Puedo usar el portal desde el celular?</div>
+      <div class="faq-a">Sí. El portal es completamente responsivo. En dispositivos móviles, las líneas de despacho se presentan como tarjetas expandibles para facilitar la navegación en pantallas pequeñas.</div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿Qué pasa si cierro el navegador sin descargar?</div>
+      <div class="faq-a">Los datos ingresados se perderán. El portal no guarda información entre sesiones. Se recomienda completar y descargar la solicitud en una sola sesión de trabajo.</div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q">¿Qué significa el campo UM?</div>
+      <div class="faq-a">UM significa Unidad de Medida. Su valor por defecto es BUL (bulto). Si tu operación usa otra unidad, puedes modificarlo directamente en la celda correspondiente.</div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <strong>Logistics and Services</strong> · Portal de Despachos · Manual de Usuario<br/>
+  <span style="font-size:12px; color:rgba(255,255,255,0.5); margin-top:6px; display:block;">Made by Logistics and Services © 2026</span>
+</footer>
+
+</body>
+</html>
