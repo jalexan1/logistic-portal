@@ -12,25 +12,31 @@ const generateHora = () => {
   const d = new Date();
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-const up = v => typeof v === "string" ? v.toUpperCase() : v;
 
-const LADOS = ["IZQUIERDO", "DERECHO", "AMBOS"];
+// ── Pasillos del WMS ──
+const PASILLOS = [
+  { value: "IL", label: "IL — I Izquierdo" },
+  { value: "IR", label: "IR — I Derecho"   },
+  { value: "JR", label: "JR — J Derecho"   },
+  { value: "JL", label: "JL — J Izquierdo" },
+];
 
 const EMPTY_FORM = () => ({
-  fecha: generateFecha(),
-  hora: generateHora(),
-  pasillo: "",
-  lado: "",
-  posOcupadas: "",
-  posVacias: "",
+  fecha:         generateFecha(),
+  hora:          generateHora(),
+  pasillo:       "",
+  posOcupadas:   "",
+  posVacias:     "",
+  usuario:       "",
   observaciones: "",
 });
 
 // ── Tarjeta de historial ──
-function HistorialCard({ registro, idx }) {
-  const total = (parseInt(registro.posOcupadas) || 0) + (parseInt(registro.posVacias) || 0);
-  const ocupPct = total > 0 ? Math.round(((parseInt(registro.posOcupadas)||0) / total) * 100) : 0;
-  const color = ocupPct >= 90 ? "#C0392B" : ocupPct >= 70 ? "#D97706" : "#0F6E56";
+function HistorialCard({ registro, idx, onEliminar, onEditar }) {
+  const total       = (parseInt(registro.posOcupadas) || 0) + (parseInt(registro.posVacias) || 0);
+  const ocupPct     = total > 0 ? Math.round(((parseInt(registro.posOcupadas) || 0) / total) * 100) : 0;
+  const color       = ocupPct >= 90 ? "#C0392B" : ocupPct >= 70 ? "#D97706" : "#0F6E56";
+  const pasilloLabel = PASILLOS.find(p => p.value === registro.pasillo)?.label || registro.pasillo;
 
   return (
     <div style={{
@@ -43,28 +49,36 @@ function HistorialCard({ registro, idx }) {
       onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
     >
       {/* Índice */}
-      <div style={{ minWidth: 32, height: 32, borderRadius: 8, background: "#F2F8F5", color: "#0F6E56", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minWidth: 32, height: 32, borderRadius: 8, background: "#F2F8F5", color: "#0F6E56", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         {idx + 1}
       </div>
 
       {/* Info principal */}
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#1a2e27" }}>Pasillo {registro.pasillo}</span>
-          <span style={{ fontSize: 11, color: "#6B8F80", background: "#F2F8F5", padding: "2px 8px", borderRadius: 6 }}>{registro.lado}</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#1a2e27" }}>{pasilloLabel}</span>
           <span style={{ fontSize: 11, color: "#9CB8AE" }}>{registro.fecha} · {registro.hora}</span>
+          {registro.usuario && (
+            <span style={{ fontSize: 11, color: "#6B8F80", background: "#F2F8F5", padding: "2px 8px", borderRadius: 6 }}>
+              👤 {registro.usuario}
+            </span>
+          )}
         </div>
-        <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#6B8F80" }}>
+        <div style={{ display: "flex", gap: 14, fontSize: 12, color: "#6B8F80", flexWrap: "wrap" }}>
           <span><strong style={{ color: "#C0392B" }}>{registro.posOcupadas}</strong> ocupadas</span>
           <span><strong style={{ color: "#0F6E56" }}>{registro.posVacias}</strong> vacías</span>
           {total > 0 && <span><strong>{total}</strong> total</span>}
-          {registro.observaciones && <span style={{ color: "#9CB8AE", fontStyle: "italic" }}>"{registro.observaciones}"</span>}
+          {registro.observaciones && (
+            <span style={{ color: "#9CB8AE", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+              "{registro.observaciones}"
+            </span>
+          )}
         </div>
       </div>
 
       {/* Barra de ocupación */}
       {total > 0 && (
-        <div style={{ textAlign: "right", minWidth: 64 }}>
+        <div style={{ textAlign: "right", minWidth: 64, flexShrink: 0 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{ocupPct}%</div>
           <div style={{ fontSize: 10, color: "#9CB8AE", marginBottom: 4 }}>ocupación</div>
           <div style={{ width: 64, height: 5, background: "#E2EDE9", borderRadius: 3, overflow: "hidden" }}>
@@ -72,6 +86,20 @@ function HistorialCard({ registro, idx }) {
           </div>
         </div>
       )}
+
+      {/* Acciones: Editar + Eliminar */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+        <button onClick={() => onEditar(registro, idx)} title="Editar registro"
+          style={{ width: 30, height: 30, border: "1px solid #D4E5DE", borderRadius: 7, background: "#fff", color: "#6B8F80", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}
+          onMouseEnter={e => { e.currentTarget.style.background = "#E1F5EE"; e.currentTarget.style.color = "#0F6E56"; e.currentTarget.style.borderColor = "#0F6E56"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#6B8F80"; e.currentTarget.style.borderColor = "#D4E5DE"; }}
+        >✎</button>
+        <button onClick={() => onEliminar(idx)} title="Eliminar registro"
+          style={{ width: 30, height: 30, border: "1px solid #F5C6C0", borderRadius: 7, background: "#fff", color: "#C0392B", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}
+          onMouseEnter={e => { e.currentTarget.style.background = "#FFF0EE"; e.currentTarget.style.borderColor = "#C0392B"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#F5C6C0"; }}
+        >×</button>
+      </div>
     </div>
   );
 }
@@ -80,38 +108,33 @@ function HistorialCard({ registro, idx }) {
 // ── COMPONENTE PRINCIPAL: Inventario Pasillos ──
 // ══════════════════════════════════════════
 export default function InventarioPasillos({ isMobile }) {
-  const [form, setForm] = useState(EMPTY_FORM());
-  const [errors, setErrors] = useState({});
-  const [historial, setHistorial] = useState([]);
+  const [form, setForm]                     = useState(EMPTY_FORM());
+  const [errors, setErrors]                 = useState({});
+  const [historial, setHistorial]           = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
-  const [toast, setToast] = useState({ visible: false, message: "" });
-  const [guardando, setGuardando] = useState(false);
-  const [successPop, setSuccessPop] = useState(false);
-  const [lastRegistro, setLastRegistro] = useState(null);
+  const [toast, setToast]                   = useState({ visible: false, message: "" });
+  const [guardando, setGuardando]           = useState(false);
+  const [successPop, setSuccessPop]         = useState(false);
+  const [lastRegistro, setLastRegistro]     = useState(null);
+  const [editIdx, setEditIdx]               = useState(null);
+  const [confirmDelete, setConfirmDelete]   = useState(null);
 
-  // Actualizar hora automáticamente cada minuto
   useEffect(() => {
     const t = setInterval(() => {
-      setForm(p => ({ ...p, hora: generateHora(), fecha: generateFecha() }));
+      if (editIdx === null) setForm(p => ({ ...p, hora: generateHora(), fecha: generateFecha() }));
     }, 60000);
     return () => clearInterval(t);
-  }, []);
+  }, [editIdx]);
 
-  // Cargar historial al montar
-  useEffect(() => {
-    cargarHistorial();
-  }, []);
+  useEffect(() => { cargarHistorial(); }, []);
 
   const cargarHistorial = async () => {
     setLoadingHistorial(true);
     try {
       const data = await obtenerHistorialInventario();
       setHistorial(data);
-    } catch (_) {
-      setHistorial([]);
-    } finally {
-      setLoadingHistorial(false);
-    }
+    } catch (_) { setHistorial([]); }
+    finally { setLoadingHistorial(false); }
   };
 
   const showToast = (msg) => {
@@ -126,109 +149,120 @@ export default function InventarioPasillos({ isMobile }) {
 
   const validateForm = () => {
     const e = {};
-    if (!form.pasillo.trim())                   e.pasillo = true;
-    if (!form.lado)                              e.lado = true;
-    if (form.posOcupadas === "" || form.posOcupadas === null) e.posOcupadas = true;
-    if (form.posVacias === "" || form.posVacias === null)     e.posVacias = true;
-    if (parseInt(form.posOcupadas) < 0)          e.posOcupadas = true;
-    if (parseInt(form.posVacias) < 0)            e.posVacias = true;
+    if (!form.pasillo)                                          e.pasillo     = true;
+    if (form.posOcupadas === "" || form.posOcupadas === null)   e.posOcupadas = true;
+    if (form.posVacias   === "" || form.posVacias   === null)   e.posVacias   = true;
+    if (parseInt(form.posOcupadas) < 0)                         e.posOcupadas = true;
+    if (parseInt(form.posVacias)   < 0)                         e.posVacias   = true;
+    if (!form.usuario.trim())                                   e.usuario     = true;
     return e;
   };
 
   const handleGuardar = async () => {
     const e = validateForm();
-    if (Object.keys(e).length > 0) {
-      setErrors(e);
-      showToast("⚠ Completa los campos requeridos");
-      return;
-    }
-
+    if (Object.keys(e).length > 0) { setErrors(e); showToast("⚠ Completa los campos requeridos"); return; }
     setGuardando(true);
     const datos = {
-      fecha: form.fecha,
-      hora: form.hora,
-      pasillo: up(form.pasillo),
-      lado: form.lado,
-      posOcupadas: parseInt(form.posOcupadas) || 0,
-      posVacias: parseInt(form.posVacias) || 0,
+      fecha:         form.fecha,
+      hora:          form.hora,
+      pasillo:       form.pasillo,
+      posOcupadas:   parseInt(form.posOcupadas) || 0,
+      posVacias:     parseInt(form.posVacias)   || 0,
+      usuario:       form.usuario.trim().toUpperCase(),
       observaciones: form.observaciones.trim(),
     };
-
-    const result = await guardarInventario(datos);
-    setLastRegistro(datos);
-    setHistorial(prev => [datos, ...prev]);
-    setSuccessPop(true);
-    setGuardando(false);
-
-    if (!result.ok) {
-      showToast("⚠ Guardado localmente (sin conexión a BD)");
+    if (editIdx !== null) {
+      setHistorial(prev => prev.map((r, i) => i === editIdx ? datos : r));
+      setLastRegistro(datos);
+      setEditIdx(null);
+      showToast("✓ Registro actualizado");
+    } else {
+      const result = await guardarInventario(datos);
+      setHistorial(prev => [datos, ...prev]);
+      setLastRegistro(datos);
+      setSuccessPop(true);
+      if (!result.ok) showToast("⚠ Guardado localmente (sin conexión a BD)");
     }
+    setGuardando(false);
   };
 
-  const handleNuevoRegistro = () => {
-    setForm(EMPTY_FORM());
+  const handleEditar = (registro, idx) => {
+    setForm({
+      fecha:         registro.fecha,
+      hora:          registro.hora,
+      pasillo:       registro.pasillo,
+      posOcupadas:   String(registro.posOcupadas),
+      posVacias:     String(registro.posVacias),
+      usuario:       registro.usuario || "",
+      observaciones: registro.observaciones || "",
+    });
+    setEditIdx(idx);
     setErrors({});
-    setSuccessPop(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    showToast("✎ Editando registro — modifica y presiona Actualizar");
   };
+
+  const handleCancelarEdicion = () => { setForm(EMPTY_FORM()); setEditIdx(null); setErrors({}); };
+  const handleEliminar        = (idx) => setConfirmDelete(idx);
+  const confirmarEliminar     = () => { setHistorial(prev => prev.filter((_, i) => i !== confirmDelete)); setConfirmDelete(null); showToast("🗑 Registro eliminado"); };
+  const handleNuevoRegistro   = () => { setForm(EMPTY_FORM()); setErrors({}); setSuccessPop(false); setEditIdx(null); };
 
   const exportarExcel = () => {
     if (historial.length === 0) { showToast("⚠ No hay registros para exportar"); return; }
     const wb = XLSX.utils.book_new();
-    const headers = ["Fecha", "Hora", "Pasillo", "Lado", "Pos. Ocupadas", "Pos. Vacías", "Total", "% Ocupación", "Observaciones"];
+    const headers = ["Fecha", "Hora", "Pasillo", "Pos. Ocupadas", "Pos. Vacías", "Total", "% Ocupación", "Usuario", "Observaciones"];
     const dataRows = historial.map(r => {
-      const total = (r.posOcupadas || 0) + (r.posVacias || 0);
-      const pct = total > 0 ? Math.round(((r.posOcupadas || 0) / total) * 100) : 0;
-      return [r.fecha, r.hora, r.pasillo, r.lado, r.posOcupadas, r.posVacias, total, `${pct}%`, r.observaciones || ""];
+      const t   = (r.posOcupadas || 0) + (r.posVacias || 0);
+      const pct = t > 0 ? Math.round(((r.posOcupadas || 0) / t) * 100) : 0;
+      return [r.fecha, r.hora, r.pasillo, r.posOcupadas, r.posVacias, t, `${pct}%`, r.usuario || "", r.observaciones || ""];
     });
     const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-    ws["!cols"] = [{wch:12},{wch:8},{wch:10},{wch:12},{wch:14},{wch:12},{wch:8},{wch:14},{wch:30}];
+    ws["!cols"] = [{wch:12},{wch:8},{wch:16},{wch:14},{wch:12},{wch:8},{wch:14},{wch:20},{wch:30}];
     XLSX.utils.book_append_sheet(wb, ws, "Inventario Pasillos");
     const d = new Date();
     XLSX.writeFile(wb, `inventario_pasillos_${pad(d.getDate())}${pad(d.getMonth()+1)}${d.getFullYear()}.xlsx`);
     showToast("✓ Excel exportado correctamente");
   };
 
-  const inputBase = {
-    width: "100%", height: 40, padding: "0 12px", fontSize: 14,
-    border: "1px solid #D4E5DE", borderRadius: 9,
-    background: "#fff", color: "#1a2e27", outline: "none",
-    boxSizing: "border-box", WebkitAppearance: "none",
-    transition: "border-color 0.2s, box-shadow 0.2s",
-  };
-  const inputError = { ...inputBase, border: "1px solid #E74C3C", background: "#FFF5F5" };
+  const inputBase     = { width: "100%", height: 40, padding: "0 12px", fontSize: 14, border: "1px solid #D4E5DE", borderRadius: 9, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box", WebkitAppearance: "none", transition: "border-color 0.2s, box-shadow 0.2s" };
+  const inputError    = { ...inputBase, border: "1px solid #E74C3C", background: "#FFF5F5" };
   const inputReadonly = { ...inputBase, background: "#F2F8F5", color: "#5A7A6E", border: "1px solid #E2EDE9", cursor: "default", fontWeight: 500 };
+  const labelStyle    = (key) => ({ fontSize: 12, color: errors[key] ? "#C0392B" : "#6B8F80", display: "block", marginBottom: 5, fontWeight: 500 });
 
-  const labelStyle = (key) => ({
-    fontSize: 12, color: errors[key] ? "#C0392B" : "#6B8F80",
-    display: "block", marginBottom: 5, fontWeight: 500,
-  });
-
-  const total = (parseInt(form.posOcupadas) || 0) + (parseInt(form.posVacias) || 0);
-  const ocupPct = total > 0 ? Math.round(((parseInt(form.posOcupadas)||0) / total) * 100) : null;
+  const total       = (parseInt(form.posOcupadas) || 0) + (parseInt(form.posVacias) || 0);
+  const ocupPct     = total > 0 ? Math.round(((parseInt(form.posOcupadas) || 0) / total) * 100) : null;
+  const modoEdicion = editIdx !== null;
 
   return (
     <div style={{ paddingBottom: 60 }}>
 
-      {/* ── Formulario de registro ── */}
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2EDE9", padding: isMobile ? "14px" : "18px 22px", marginBottom: 16 }}>
+      {/* Banner modo edición */}
+      {modoEdicion && (
+        <div style={{ background: "#FFFBEB", border: "1px solid #F6D860", borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 13, color: "#92600A", fontWeight: 600 }}>✎ Modo edición — registro #{editIdx + 1}</span>
+          <button onClick={handleCancelarEdicion}
+            style={{ fontSize: 12, color: "#92600A", background: "none", border: "1px solid #F6D860", borderRadius: 7, padding: "4px 12px", cursor: "pointer" }}
+            onMouseEnter={e => e.currentTarget.style.background = "#FEF3C7"}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}
+          >Cancelar edición</button>
+        </div>
+      )}
+
+      {/* Formulario */}
+      <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${modoEdicion ? "#F6D860" : "#E2EDE9"}`, padding: isMobile ? "14px" : "18px 22px", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-            Registro de posiciones
+            {modoEdicion ? "Actualizar registro" : "Registro de posiciones"}
           </div>
           {ocupPct !== null && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, color: "#6B8F80" }}>Ocupación en tiempo real:</span>
-              <span style={{
-                fontSize: 13, fontWeight: 800,
-                color: ocupPct >= 90 ? "#C0392B" : ocupPct >= 70 ? "#D97706" : "#0F6E56",
-                background: ocupPct >= 90 ? "#FFF5F5" : ocupPct >= 70 ? "#FFFBEB" : "#E1F5EE",
-                padding: "2px 10px", borderRadius: 20,
-              }}>{ocupPct}%</span>
+              <span style={{ fontSize: 11, color: "#6B8F80" }}>Ocupación:</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: ocupPct >= 90 ? "#C0392B" : ocupPct >= 70 ? "#D97706" : "#0F6E56", background: ocupPct >= 90 ? "#FFF5F5" : ocupPct >= 70 ? "#FFFBEB" : "#E1F5EE", padding: "2px 10px", borderRadius: 20 }}>{ocupPct}%</span>
             </div>
           )}
         </div>
 
-        {/* Fila 1: Fecha · Hora · Pasillo */}
+        {/* Fila 1: Fecha · Hora · Pasillo dropdown */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 2fr", gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelStyle("fecha")}>Fecha <span style={{ fontSize: 10, color: "#9CB8AE" }}>automática</span></label>
@@ -240,62 +274,51 @@ export default function InventarioPasillos({ isMobile }) {
           </div>
           <div>
             <label style={labelStyle("pasillo")}>Pasillo *</label>
-            <input type="text" value={form.pasillo}
-              onChange={e => updateField("pasillo", up(e.target.value))}
-              placeholder="Ej: A1, B2, PASILLO-3"
-              style={errors.pasillo ? inputError : inputBase}
+            <select value={form.pasillo} onChange={e => updateField("pasillo", e.target.value)}
+              style={{
+                ...(errors.pasillo ? inputError : inputBase),
+                cursor: "pointer",
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%236B8F80' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center", paddingRight: 36,
+              }}
               onFocus={e => { e.target.style.borderColor = "#0F6E56"; e.target.style.boxShadow = "0 0 0 3px rgba(15,110,86,0.08)"; }}
-              onBlur={e => { e.target.style.borderColor = errors.pasillo ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
-            />
+              onBlur={e  => { e.target.style.borderColor = errors.pasillo ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
+            >
+              <option value="">— Selecciona un pasillo —</option>
+              {PASILLOS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
           </div>
         </div>
 
-        {/* Fila 2: Lado · Posiciones Ocupadas · Posiciones Vacías */}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1.5fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-          {/* Lado: selector de botones */}
-          <div>
-            <label style={labelStyle("lado")}>Lado *</label>
-            <div style={{ display: "flex", gap: 6 }}>
-              {LADOS.map(l => (
-                <button key={l} onClick={() => { updateField("lado", l); }}
-                  style={{
-                    flex: 1, height: 40, border: `1px solid ${form.lado === l ? "#0F6E56" : errors.lado ? "#E74C3C" : "#D4E5DE"}`,
-                    borderRadius: 9, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                    background: form.lado === l ? "#0F6E56" : errors.lado ? "#FFF5F5" : "#fff",
-                    color: form.lado === l ? "#fff" : errors.lado ? "#C0392B" : "#1a2e27",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => { if (form.lado !== l) { e.currentTarget.style.background = "#F2F8F5"; e.currentTarget.style.borderColor = "#0F6E56"; } }}
-                  onMouseLeave={e => { if (form.lado !== l) { e.currentTarget.style.background = errors.lado ? "#FFF5F5" : "#fff"; e.currentTarget.style.borderColor = errors.lado ? "#E74C3C" : "#D4E5DE"; } }}
-                >{l.charAt(0) + l.slice(1).toLowerCase()}</button>
-              ))}
-            </div>
-          </div>
-
+        {/* Fila 2: Pos. Ocupadas · Pos. Vacías · Usuario */}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 2fr", gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelStyle("posOcupadas")}>Posiciones Ocupadas *</label>
-            <input type="number" min="0" value={form.posOcupadas}
-              onChange={e => updateField("posOcupadas", e.target.value)}
-              placeholder="0"
+            <input type="number" min="0" value={form.posOcupadas} onChange={e => updateField("posOcupadas", e.target.value)} placeholder="0"
               style={{ ...(errors.posOcupadas ? inputError : inputBase), textAlign: "center" }}
               onFocus={e => { e.target.style.borderColor = "#0F6E56"; e.target.style.boxShadow = "0 0 0 3px rgba(15,110,86,0.08)"; }}
-              onBlur={e => { e.target.style.borderColor = errors.posOcupadas ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
+              onBlur={e  => { e.target.style.borderColor = errors.posOcupadas ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
             />
           </div>
-
           <div>
             <label style={labelStyle("posVacias")}>Posiciones Vacías *</label>
-            <input type="number" min="0" value={form.posVacias}
-              onChange={e => updateField("posVacias", e.target.value)}
-              placeholder="0"
+            <input type="number" min="0" value={form.posVacias} onChange={e => updateField("posVacias", e.target.value)} placeholder="0"
               style={{ ...(errors.posVacias ? inputError : inputBase), textAlign: "center" }}
               onFocus={e => { e.target.style.borderColor = "#0F6E56"; e.target.style.boxShadow = "0 0 0 3px rgba(15,110,86,0.08)"; }}
-              onBlur={e => { e.target.style.borderColor = errors.posVacias ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
+              onBlur={e  => { e.target.style.borderColor = errors.posVacias ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
+            />
+          </div>
+          <div>
+            <label style={labelStyle("usuario")}>Usuario *</label>
+            <input type="text" value={form.usuario} onChange={e => updateField("usuario", e.target.value.toUpperCase())} placeholder="NOMBRE DEL OPERARIO"
+              style={{ ...(errors.usuario ? inputError : inputBase), textTransform: "uppercase" }}
+              onFocus={e => { e.target.style.borderColor = "#0F6E56"; e.target.style.boxShadow = "0 0 0 3px rgba(15,110,86,0.08)"; }}
+              onBlur={e  => { e.target.style.borderColor = errors.usuario ? "#E74C3C" : "#D4E5DE"; e.target.style.boxShadow = "none"; }}
             />
           </div>
         </div>
 
-        {/* Fila 3: Barra de ocupación (si hay datos) + Observaciones */}
+        {/* Barra de ocupación en tiempo real */}
         {total > 0 && (
           <div style={{ background: "#F7FCF9", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -306,8 +329,8 @@ export default function InventarioPasillos({ isMobile }) {
               <div style={{ width: `${ocupPct}%`, height: "100%", background: ocupPct >= 90 ? "#C0392B" : ocupPct >= 70 ? "#F59E0B" : "#0F6E56", borderRadius: 4, transition: "width 0.4s ease" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "#9CB8AE" }}>
-              <span>{parseInt(form.posOcupadas)||0} ocupadas</span>
-              <span>{parseInt(form.posVacias)||0} vacías</span>
+              <span>{parseInt(form.posOcupadas) || 0} ocupadas</span>
+              <span>{parseInt(form.posVacias)   || 0} vacías</span>
             </div>
           </div>
         )}
@@ -322,32 +345,32 @@ export default function InventarioPasillos({ isMobile }) {
             rows={2}
             style={{ ...inputBase, height: "auto", padding: "10px 12px", resize: "vertical", lineHeight: 1.5 }}
             onFocus={e => { e.target.style.borderColor = "#0F6E56"; e.target.style.boxShadow = "0 0 0 3px rgba(15,110,86,0.08)"; }}
-            onBlur={e => { e.target.style.borderColor = "#D4E5DE"; e.target.style.boxShadow = "none"; }}
+            onBlur={e  => { e.target.style.borderColor = "#D4E5DE"; e.target.style.boxShadow = "none"; }}
           />
         </div>
 
-        {/* Botón guardar */}
+        {/* Botón guardar / actualizar */}
         <button onClick={handleGuardar} disabled={guardando}
-          style={{ width: "100%", height: 46, borderRadius: 10, background: guardando ? "#6B8F80" : "#0F6E56", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: guardando ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "background 0.2s" }}
-          onMouseEnter={e => { if (!guardando) e.currentTarget.style.background = "#085041"; }}
-          onMouseLeave={e => { if (!guardando) e.currentTarget.style.background = "#0F6E56"; }}
+          style={{ width: "100%", height: 46, borderRadius: 10, background: guardando ? "#6B8F80" : modoEdicion ? "#D97706" : "#0F6E56", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: guardando ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "background 0.2s" }}
+          onMouseEnter={e => { if (!guardando) e.currentTarget.style.background = modoEdicion ? "#B45309" : "#085041"; }}
+          onMouseLeave={e => { if (!guardando) e.currentTarget.style.background = modoEdicion ? "#D97706" : "#0F6E56"; }}
         >
           {guardando ? (
             <><span style={{ fontSize: 16 }}>⏳</span> Guardando...</>
+          ) : modoEdicion ? (
+            <><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2-8 8H3.5v-2l8-8z" stroke="white" strokeWidth="1.4" strokeLinejoin="round"/></svg>Actualizar registro</>
           ) : (
             <><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 10.5V13a.5.5 0 0 1-.5.5H3A.5.5 0 0 1 2.5 13V10.5M8 2v8M5.5 7.5 8 10l2.5-2.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>Guardar registro</>
           )}
         </button>
       </div>
 
-      {/* ── Historial ── */}
+      {/* Historial */}
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2EDE9", overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #E2EDE9" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: "0.07em" }}>Historial de registros</span>
-            {historial.length > 0 && (
-              <span style={{ fontSize: 11, color: "#0F6E56", background: "#E1F5EE", padding: "2px 8px", borderRadius: 12, fontWeight: 600 }}>{historial.length}</span>
-            )}
+            {historial.length > 0 && <span style={{ fontSize: 11, color: "#0F6E56", background: "#E1F5EE", padding: "2px 8px", borderRadius: 12, fontWeight: 600 }}>{historial.length}</span>}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={cargarHistorial}
@@ -367,7 +390,6 @@ export default function InventarioPasillos({ isMobile }) {
             )}
           </div>
         </div>
-
         <div style={{ padding: isMobile ? "12px" : "16px 20px" }}>
           {loadingHistorial ? (
             <div style={{ textAlign: "center", padding: "40px 0", color: "#9CB8AE", fontSize: 13 }}>Cargando historial…</div>
@@ -378,7 +400,9 @@ export default function InventarioPasillos({ isMobile }) {
               <div style={{ fontSize: 12, color: "#9CB8AE", marginTop: 4 }}>Los registros guardados aparecerán aquí</div>
             </div>
           ) : (
-            historial.map((r, idx) => <HistorialCard key={idx} registro={r} idx={idx} />)
+            historial.map((r, idx) => (
+              <HistorialCard key={idx} registro={r} idx={idx} onEliminar={handleEliminar} onEditar={handleEditar} />
+            ))
           )}
         </div>
       </div>
@@ -388,19 +412,39 @@ export default function InventarioPasillos({ isMobile }) {
       <div style={{ marginTop: 6, textAlign: "center", fontSize: 11, color: "#0F6E56", fontWeight: 600 }}>Made by Logistics and Services © 2026</div>
 
       {/* Toast */}
-      <div style={{
-        position: "fixed", bottom: 20, left: "50%",
-        transform: `translateX(-50%) translateY(${toast.visible ? 0 : 10}px)`,
-        zIndex: 1000, background: "#1a2e27", color: "#fff",
-        padding: "10px 20px", borderRadius: 24, fontSize: 13, fontWeight: 500,
-        opacity: toast.visible ? 1 : 0, transition: "all 0.25s ease",
-        pointerEvents: "none", whiteSpace: "nowrap",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.2)", maxWidth: "90vw", textAlign: "center",
-      }}>
+      <div style={{ position: "fixed", bottom: 20, left: "50%", transform: `translateX(-50%) translateY(${toast.visible ? 0 : 10}px)`, zIndex: 1000, background: "#1a2e27", color: "#fff", padding: "10px 20px", borderRadius: 24, fontSize: 13, fontWeight: 500, opacity: toast.visible ? 1 : 0, transition: "all 0.25s ease", pointerEvents: "none", whiteSpace: "nowrap", boxShadow: "0 4px 20px rgba(0,0,0,0.2)", maxWidth: "90vw", textAlign: "center" }}>
         {toast.message}
       </div>
 
-      {/* ── Popup de éxito ── */}
+      {/* Modal confirmar eliminación */}
+      {confirmDelete !== null && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(10,30,24,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", backdropFilter: "blur(3px)" }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 360, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", animation: "popIn 0.22s cubic-bezier(0.34,1.56,0.64,1)" }}>
+            <div style={{ padding: "24px 24px 16px", textAlign: "center" }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>🗑</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#1a2e27", marginBottom: 6 }}>¿Eliminar registro #{confirmDelete + 1}?</div>
+              <div style={{ fontSize: 13, color: "#6B8F80" }}>
+                Pasillo <strong>{historial[confirmDelete]?.pasillo}</strong> · {historial[confirmDelete]?.fecha}<br/>Esta acción no se puede deshacer.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, padding: "0 24px 24px" }}>
+              <button onClick={() => setConfirmDelete(null)}
+                style={{ flex: 1, height: 42, borderRadius: 9, background: "#F2F8F5", color: "#0F6E56", border: "1px solid #C5DDD4", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#E1F5EE"}
+                onMouseLeave={e => e.currentTarget.style.background = "#F2F8F5"}
+              >Cancelar</button>
+              <button onClick={confirmarEliminar}
+                style={{ flex: 1, height: 42, borderRadius: 9, background: "#C0392B", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#922B21"}
+                onMouseLeave={e => e.currentTarget.style.background = "#C0392B"}
+              >Eliminar</button>
+            </div>
+          </div>
+          <style>{`@keyframes popIn{from{opacity:0;transform:scale(0.88)}to{opacity:1;transform:scale(1)}}`}</style>
+        </div>
+      )}
+
+      {/* Popup éxito nuevo registro */}
       {successPop && lastRegistro && (
         <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(10,30,24,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", backdropFilter: "blur(3px)" }}>
           <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 400, overflow: "hidden", boxShadow: "0 28px 70px rgba(0,0,0,0.22)", animation: "popIn 0.28s cubic-bezier(0.34,1.56,0.64,1)" }}>
@@ -412,10 +456,10 @@ export default function InventarioPasillos({ isMobile }) {
             </div>
             <div style={{ padding: "20px 28px 6px" }}>
               {[
-                { label: "Fecha / Hora", value: `${lastRegistro.fecha} · ${lastRegistro.hora}` },
-                { label: "Pasillo", value: lastRegistro.pasillo },
-                { label: "Lado", value: lastRegistro.lado },
-                { label: "Ocupadas / Vacías", value: `${lastRegistro.posOcupadas} / ${lastRegistro.posVacias}` },
+                { label: "Fecha / Hora",     value: `${lastRegistro.fecha} · ${lastRegistro.hora}` },
+                { label: "Pasillo",          value: PASILLOS.find(p => p.value === lastRegistro.pasillo)?.label || lastRegistro.pasillo },
+                { label: "Ocupadas / Vacías",value: `${lastRegistro.posOcupadas} / ${lastRegistro.posVacias}` },
+                { label: "Usuario",          value: lastRegistro.usuario || "—" },
               ].map(({ label, value }) => (
                 <div key={label} style={{ textAlign: "center", padding: "10px 0", borderBottom: "1px solid #F0F7F4" }}>
                   <div style={{ fontSize: 10, color: "#9CB8AE", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 3 }}>{label}</div>
@@ -424,8 +468,16 @@ export default function InventarioPasillos({ isMobile }) {
               ))}
             </div>
             <div style={{ padding: "16px 28px 22px", display: "flex", gap: 8 }}>
-              <button onClick={handleNuevoRegistro} style={{ flex: 1, height: 44, borderRadius: 10, background: "#F2F8F5", color: "#0F6E56", border: "1px solid #C5DDD4", fontSize: 13, fontWeight: 600, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = "#E1F5EE"} onMouseLeave={e => e.currentTarget.style.background = "#F2F8F5"}>Nuevo registro</button>
-              <button onClick={() => setSuccessPop(false)} style={{ flex: 1, height: 44, borderRadius: 10, background: "#0F6E56", color: "#fff", border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = "#085041"} onMouseLeave={e => e.currentTarget.style.background = "#0F6E56"}>Cerrar</button>
+              <button onClick={handleNuevoRegistro}
+                style={{ flex: 1, height: 44, borderRadius: 10, background: "#F2F8F5", color: "#0F6E56", border: "1px solid #C5DDD4", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#E1F5EE"}
+                onMouseLeave={e => e.currentTarget.style.background = "#F2F8F5"}
+              >Nuevo registro</button>
+              <button onClick={() => setSuccessPop(false)}
+                style={{ flex: 1, height: 44, borderRadius: 10, background: "#0F6E56", color: "#fff", border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#085041"}
+                onMouseLeave={e => e.currentTarget.style.background = "#0F6E56"}
+              >Cerrar</button>
             </div>
           </div>
           <style>{`@keyframes popIn{from{opacity:0;transform:scale(0.88)}to{opacity:1;transform:scale(1)}}`}</style>
