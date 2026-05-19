@@ -254,6 +254,18 @@ export default function InventarioPasillos({ isMobile }) {
   const [showTabla, setShowTabla]     = useState(true);
   const [showResumen, setShowResumen] = useState(false);
 
+  // ── Filtros ──
+  const [filtPasillo,   setFiltPasillo]   = useState("");
+  const [filtEstado,    setFiltEstado]    = useState("");
+  const [filtUsuario,   setFiltUsuario]   = useState("");
+  const [filtFechaIni,  setFiltFechaIni]  = useState("");  // "YYYY-MM-DD"
+  const [filtFechaFin,  setFiltFechaFin]  = useState("");  // "YYYY-MM-DD"
+  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
+
+  // ── Paginación ──
+  const [pagSize,    setPagSize]    = useState(4);
+  const [pagActual,  setPagActual]  = useState(1);
+
   useEffect(() => {
     const t = setInterval(() => {
       if (editIdx === null) setForm(p => ({ ...p, hora: generateHora(), fecha: generateFecha() }));
@@ -384,6 +396,53 @@ export default function InventarioPasillos({ isMobile }) {
   // ── Grid responsive para formulario ──
   const gridForm1 = isMobile ? "1fr 1fr" : "1fr 1fr 2fr";
   const gridForm2 = isMobile ? "1fr 1fr" : "1fr 1fr 2fr";
+
+  // ── Helper: "DD/MM/YYYY" → Date para comparar ──
+  const parseFecha = (str) => {
+    if (!str) return null;
+    const [d, m, y] = str.split("/");
+    return new Date(`${y}-${m}-${d}`);
+  };
+
+  // ── Historial filtrado ──
+  const historialFiltrado = historial.filter(r => {
+    if (filtPasillo  && r.pasillo !== filtPasillo)  return false;
+    if (filtUsuario  && !r.usuario?.toUpperCase().includes(filtUsuario.toUpperCase())) return false;
+    if (filtEstado) {
+      const ocu   = parseInt(r.posOcupadas) || 0;
+      const vac   = parseInt(r.posVacias)   || 0;
+      const total = ocu + vac;
+      const pct   = total > 0 ? Math.round((ocu / total) * 100) : 0;
+      if (getEstado(pct).label !== filtEstado) return false;
+    }
+    if (filtFechaIni || filtFechaFin) {
+      const fechaReg = parseFecha(r.fecha);
+      if (filtFechaIni) {
+        const ini = new Date(filtFechaIni);
+        if (fechaReg < ini) return false;
+      }
+      if (filtFechaFin) {
+        const fin = new Date(filtFechaFin);
+        fin.setHours(23, 59, 59);
+        if (fechaReg > fin) return false;
+      }
+    }
+    return true;
+  });
+
+  const totalPags   = Math.max(1, Math.ceil(historialFiltrado.length / pagSize));
+  const pagActualClamped = Math.min(pagActual, totalPags);
+  const historialPaginado = historialFiltrado.slice(
+    (pagActualClamped - 1) * pagSize,
+    pagActualClamped * pagSize
+  );
+
+  const hayFiltrosActivos = filtPasillo || filtEstado || filtUsuario || filtFechaIni || filtFechaFin;
+
+  const limpiarFiltros = () => {
+    setFiltPasillo(""); setFiltEstado(""); setFiltUsuario("");
+    setFiltFechaIni(""); setFiltFechaFin(""); setPagActual(1);
+  };
 
   return (
     <div style={{ paddingBottom: 60 }}>
@@ -538,12 +597,175 @@ export default function InventarioPasillos({ isMobile }) {
             </div>
           }
         />
+
         {showTabla && (
           <div style={{ padding: isMobile ? "12px" : "14px 18px" }}>
+
+            {/* ── Barra de filtros ── */}
+            <div style={{ marginBottom:12 }}>
+
+              {/* Fila superior: botón filtros + paginador */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom: filtrosAbiertos ? 10 : 0 }}>
+
+                {/* Botón abrir/cerrar filtros */}
+                <button
+                  onClick={()=>setFiltrosAbiertos(v=>!v)}
+                  style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 14px", fontSize:12, fontWeight:600, border:`1px solid ${hayFiltrosActivos?"#0F6E56":"#D4E5DE"}`, borderRadius:8, background:hayFiltrosActivos?"#E1F5EE":"#fff", color:hayFiltrosActivos?"#0F6E56":"#6B8F80", cursor:"pointer", transition:"all 0.15s" }}
+                  onMouseEnter={e=>{ e.currentTarget.style.borderColor="#0F6E56"; e.currentTarget.style.color="#0F6E56"; }}
+                  onMouseLeave={e=>{ e.currentTarget.style.borderColor=hayFiltrosActivos?"#0F6E56":"#D4E5DE"; e.currentTarget.style.color=hayFiltrosActivos?"#0F6E56":"#6B8F80"; }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M1 3h12M3 7h8M5 11h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+                  Filtros {hayFiltrosActivos && <span style={{ background:"#0F6E56", color:"#fff", borderRadius:10, padding:"0 6px", fontSize:10 }}>ON</span>}
+                  <span style={{ fontSize:11, color:"#9CB8AE" }}>{filtrosAbiertos ? "▲" : "▼"}</span>
+                </button>
+
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                  {/* Contador de resultados */}
+                  {hayFiltrosActivos && (
+                    <span style={{ fontSize:11, color:"#6B8F80" }}>
+                      {historialFiltrado.length} de {historial.length} registros
+                    </span>
+                  )}
+
+                  {/* Selector de registros por página */}
+                  <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                    <span style={{ fontSize:11, color:"#9CB8AE" }}>Mostrar:</span>
+                    {[4, 15, 30].map(n => (
+                      <button key={n} onClick={()=>{ setPagSize(n); setPagActual(1); }}
+                        style={{ width:32, height:26, border:`1px solid ${pagSize===n?"#0F6E56":"#D4E5DE"}`, borderRadius:6, background:pagSize===n?"#0F6E56":"#fff", color:pagSize===n?"#fff":"#6B8F80", fontSize:11, fontWeight:600, cursor:"pointer", transition:"all 0.15s" }}
+                        onMouseEnter={e=>{ if(pagSize!==n){ e.currentTarget.style.borderColor="#0F6E56"; e.currentTarget.style.color="#0F6E56"; }}}
+                        onMouseLeave={e=>{ if(pagSize!==n){ e.currentTarget.style.borderColor="#D4E5DE"; e.currentTarget.style.color="#6B8F80"; }}}
+                      >{n}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Panel de filtros desplegable */}
+              {filtrosAbiertos && (
+                <div style={{ background:"#F7FCF9", border:"1px solid #E2EDE9", borderRadius:10, padding: isMobile ? "12px" : "14px 16px" }}>
+                  <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+
+                    {/* Fecha inicio */}
+                    <div>
+                      <label style={{ fontSize:11, color:"#6B8F80", display:"block", marginBottom:4, fontWeight:500 }}>Fecha inicio</label>
+                      <input type="date" value={filtFechaIni}
+                        onChange={e=>{ setFiltFechaIni(e.target.value); setPagActual(1); }}
+                        style={{ width:"100%", height:36, padding:"0 10px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box" }}
+                        onFocus={e=>e.target.style.borderColor="#0F6E56"}
+                        onBlur={e=>e.target.style.borderColor="#D4E5DE"}
+                      />
+                    </div>
+
+                    {/* Fecha fin */}
+                    <div>
+                      <label style={{ fontSize:11, color:"#6B8F80", display:"block", marginBottom:4, fontWeight:500 }}>Fecha fin</label>
+                      <input type="date" value={filtFechaFin}
+                        onChange={e=>{ setFiltFechaFin(e.target.value); setPagActual(1); }}
+                        style={{ width:"100%", height:36, padding:"0 10px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box" }}
+                        onFocus={e=>e.target.style.borderColor="#0F6E56"}
+                        onBlur={e=>e.target.style.borderColor="#D4E5DE"}
+                      />
+                    </div>
+
+                    {/* Pasillo */}
+                    <div>
+                      <label style={{ fontSize:11, color:"#6B8F80", display:"block", marginBottom:4, fontWeight:500 }}>Pasillo</label>
+                      <select value={filtPasillo} onChange={e=>{ setFiltPasillo(e.target.value); setPagActual(1); }}
+                        style={{ width:"100%", height:36, padding:"0 10px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box", cursor:"pointer", WebkitAppearance:"none", backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%236B8F80' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")`, backgroundRepeat:"no-repeat", backgroundPosition:"right 8px center", paddingRight:28 }}
+                        onFocus={e=>e.target.style.borderColor="#0F6E56"}
+                        onBlur={e=>e.target.style.borderColor="#D4E5DE"}
+                      >
+                        <option value="">Todos</option>
+                        {PASILLOS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Estado */}
+                    <div>
+                      <label style={{ fontSize:11, color:"#6B8F80", display:"block", marginBottom:4, fontWeight:500 }}>Estado</label>
+                      <select value={filtEstado} onChange={e=>{ setFiltEstado(e.target.value); setPagActual(1); }}
+                        style={{ width:"100%", height:36, padding:"0 10px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box", cursor:"pointer", WebkitAppearance:"none", backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%236B8F80' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")`, backgroundRepeat:"no-repeat", backgroundPosition:"right 8px center", paddingRight:28 }}
+                        onFocus={e=>e.target.style.borderColor="#0F6E56"}
+                        onBlur={e=>e.target.style.borderColor="#D4E5DE"}
+                      >
+                        <option value="">Todos</option>
+                        {["BIEN","ALERTA","CRÍTICO","BAJO"].map(s=><option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Usuario */}
+                    <div style={{ gridColumn: isMobile ? "span 2" : "span 1" }}>
+                      <label style={{ fontSize:11, color:"#6B8F80", display:"block", marginBottom:4, fontWeight:500 }}>Usuario</label>
+                      <input type="text" value={filtUsuario} placeholder="Buscar usuario…"
+                        onChange={e=>{ setFiltUsuario(e.target.value); setPagActual(1); }}
+                        style={{ width:"100%", height:36, padding:"0 10px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box", textTransform:"uppercase" }}
+                        onFocus={e=>e.target.style.borderColor="#0F6E56"}
+                        onBlur={e=>e.target.style.borderColor="#D4E5DE"}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Botón limpiar filtros */}
+                  {hayFiltrosActivos && (
+                    <button onClick={limpiarFiltros}
+                      style={{ fontSize:11, color:"#C0392B", background:"none", border:"1px solid #F5C6C0", borderRadius:7, padding:"4px 12px", cursor:"pointer" }}
+                      onMouseEnter={e=>{ e.currentTarget.style.background="#FFF0EE"; }}
+                      onMouseLeave={e=>{ e.currentTarget.style.background="none"; }}
+                    >× Limpiar filtros</button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Tabla o cargando ── */}
             {loadingHistorial
               ? <div style={{ textAlign:"center", padding:"32px 0", color:"#9CB8AE", fontSize:13 }}>Cargando…</div>
-              : <TablaConsolidada historial={historial} onEliminar={handleEliminar} onEditar={handleEditar} isMobile={isMobile} />
+              : <TablaConsolidada historial={historialPaginado} onEliminar={(idxPag)=>{ const idxReal = (pagActualClamped-1)*pagSize + idxPag; handleEliminar(idxReal); }} onEditar={(r, idxPag)=>{ const idxReal = (pagActualClamped-1)*pagSize + idxPag; handleEditar(r, idxReal); }} isMobile={isMobile} />
             }
+
+            {/* ── Paginador ── */}
+            {!loadingHistorial && historialFiltrado.length > pagSize && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:14, flexWrap:"wrap", gap:8 }}>
+                <span style={{ fontSize:12, color:"#9CB8AE" }}>
+                  Página {pagActualClamped} de {totalPags} · {historialFiltrado.length} registros
+                </span>
+                <div style={{ display:"flex", gap:4 }}>
+                  {/* Anterior */}
+                  <button onClick={()=>setPagActual(p=>Math.max(1,p-1))} disabled={pagActualClamped===1}
+                    style={{ height:30, padding:"0 12px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:pagActualClamped===1?"#F7FCF9":"#fff", color:pagActualClamped===1?"#C5DDD4":"#0F6E56", cursor:pagActualClamped===1?"not-allowed":"pointer", fontWeight:600 }}
+                    onMouseEnter={e=>{ if(pagActualClamped!==1) e.currentTarget.style.background="#F2F8F5"; }}
+                    onMouseLeave={e=>{ if(pagActualClamped!==1) e.currentTarget.style.background="#fff"; }}
+                  >← Ant.</button>
+
+                  {/* Números de página */}
+                  {Array.from({ length: totalPags }, (_, i) => i + 1)
+                    .filter(n => n === 1 || n === totalPags || Math.abs(n - pagActualClamped) <= 1)
+                    .reduce((acc, n, i, arr) => {
+                      if (i > 0 && n - arr[i-1] > 1) acc.push("...");
+                      acc.push(n);
+                      return acc;
+                    }, [])
+                    .map((n, i) => n === "..." ? (
+                      <span key={`e${i}`} style={{ height:30, padding:"0 6px", display:"flex", alignItems:"center", fontSize:12, color:"#9CB8AE" }}>…</span>
+                    ) : (
+                      <button key={n} onClick={()=>setPagActual(n)}
+                        style={{ width:30, height:30, border:`1px solid ${pagActualClamped===n?"#0F6E56":"#D4E5DE"}`, borderRadius:7, background:pagActualClamped===n?"#0F6E56":"#fff", color:pagActualClamped===n?"#fff":"#6B8F80", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.12s" }}
+                        onMouseEnter={e=>{ if(pagActualClamped!==n){ e.currentTarget.style.background="#F2F8F5"; e.currentTarget.style.borderColor="#0F6E56"; }}}
+                        onMouseLeave={e=>{ if(pagActualClamped!==n){ e.currentTarget.style.background="#fff"; e.currentTarget.style.borderColor="#D4E5DE"; }}}
+                      >{n}</button>
+                    ))
+                  }
+
+                  {/* Siguiente */}
+                  <button onClick={()=>setPagActual(p=>Math.min(totalPags,p+1))} disabled={pagActualClamped===totalPags}
+                    style={{ height:30, padding:"0 12px", fontSize:12, border:"1px solid #D4E5DE", borderRadius:7, background:pagActualClamped===totalPags?"#F7FCF9":"#fff", color:pagActualClamped===totalPags?"#C5DDD4":"#0F6E56", cursor:pagActualClamped===totalPags?"not-allowed":"pointer", fontWeight:600 }}
+                    onMouseEnter={e=>{ if(pagActualClamped!==totalPags) e.currentTarget.style.background="#F2F8F5"; }}
+                    onMouseLeave={e=>{ if(pagActualClamped!==totalPags) e.currentTarget.style.background="#fff"; }}
+                  >Sig. →</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
