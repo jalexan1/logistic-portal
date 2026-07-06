@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import PortalDespachos from "./components/PortalDespachos";
 import InventarioPasillos from "./components/InventarioPasillos";
-import Utilidades from "./components/utilidades/Utilidades"; // ── NUEVO: módulo Utilidades
 
 // ── Hook responsive ──
 const useIsMobile = () => {
@@ -38,19 +37,6 @@ const VISTAS = [
         <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.3"/>
         <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.3"/>
         <rect x="9" y="9" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.3"/>
-      </svg>
-    ),
-  },
-  // ── NUEVO: Utilidades ──────────────────────────────────────────────────
-  {
-    id: "utilidades",
-    label: "Utilidades",
-    labelCorto: "Utilidades",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M13.5 2.5L10 6l-1.5-1.5L12 1l1.5 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-        <path d="M10 6 5.5 10.5A2.12 2.12 0 1 0 8 13L12.5 8.5 10 6Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-        <circle cx="4.5" cy="12.5" r="1" fill="currentColor"/>
       </svg>
     ),
   },
@@ -127,9 +113,8 @@ export default function App() {
 
       {/* ── Contenido de la vista activa ── */}
       <div style={{ maxWidth: 1140, margin: "0 auto", padding: isMobile ? "16px 12px 0" : "24px 24px 0" }}>
-        {vista === "despachos"  && <PortalDespachos isMobile={isMobile} />}
+        {vista === "despachos" && <PortalDespachos isMobile={isMobile} />}
         {vista === "inventario" && <InventarioPasillos isMobile={isMobile} />}
-        {vista === "utilidades" && <Utilidades isMobile={isMobile} />} {/* ── NUEVO */}
       </div>
 
     </div>
