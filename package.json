@@ -10,10 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@upstash/redis": "^1.38.0",
+    "@supabase/supabase-js": "^2.117.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "xls": "^0.5.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

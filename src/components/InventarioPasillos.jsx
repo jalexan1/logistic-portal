@@ -3,9 +3,10 @@ import * as XLSX from "xlsx";
 import {
   guardarInventario,
   obtenerHistorialInventario,
-  eliminarInventario,
+  anularInventario,
   actualizarInventario,
 } from "../services/storageService";
+import { useAuth } from "./auth/authContext";
 
 // ── Helpers ──
 const pad = n => String(n).padStart(2, "0");
@@ -161,7 +162,7 @@ function TablaConsolidada({ historial, onEliminar, onEditar, isMobile }) {
             {r.observaciones && <div style={{ fontSize: 11, color: "#9CB8AE", fontStyle: "italic", marginBottom: 8 }}>"{r.observaciones}"</div>}
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={() => onEditar(r, idx)} style={{ flex: 1, height: 32, border: "1px solid #D4E5DE", borderRadius: 7, background: "#fff", color: "#0F6E56", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✎ Editar</button>
-              <button onClick={() => onEliminar(idx)} style={{ flex: 1, height: 32, border: "1px solid #F5C6C0", borderRadius: 7, background: "#FFF5F5", color: "#C0392B", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>× Eliminar</button>
+              <button onClick={() => onEliminar(idx)} style={{ flex: 1, height: 32, border: "1px solid #F5C6C0", borderRadius: 7, background: "#FFF5F5", color: "#C0392B", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>× Anular</button>
             </div>
           </div>
         );
@@ -239,7 +240,9 @@ function TablaConsolidada({ historial, onEliminar, onEditar, isMobile }) {
 // ── COMPONENTE PRINCIPAL ──
 // ══════════════════════════════════════════════════════
 export default function InventarioPasillos({ isMobile }) {
-  const [form, setForm]                   = useState(EMPTY_FORM());
+  const { perfil } = useAuth() || {};
+  // "Usuario" se prellena con el nombre del perfil (se puede cambiar)
+  const [form, setForm]                   = useState(() => ({ ...EMPTY_FORM(), usuario: (perfil?.nombre || "").toUpperCase() }));
   const [errors, setErrors]               = useState({});
   const [historial, setHistorial]         = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
@@ -249,6 +252,7 @@ export default function InventarioPasillos({ isMobile }) {
   const [lastRegistro, setLastRegistro]   = useState(null);
   const [editIdx, setEditIdx]             = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState("");
 
   // ── Secciones colapsables ──
   const [showTabla, setShowTabla]     = useState(true);
@@ -278,9 +282,10 @@ export default function InventarioPasillos({ isMobile }) {
   const cargarHistorial = async () => {
     setLoadingHistorial(true);
     try { const data = await obtenerHistorialInventario(); setHistorial(data); }
-    catch (_) { setHistorial([]); }
+    catch (err) { showToast("⚠ " + err.message); }
     finally { setLoadingHistorial(false); }
   };
+
 
   const showToast = (msg) => {
     setToast({ visible: true, message: msg });
@@ -316,24 +321,34 @@ export default function InventarioPasillos({ isMobile }) {
     };
 
     if (editIdx !== null) {
-      // Actualizar en BD
-      const nuevoHistorial = historial.map((r, i) => i === editIdx ? datos : r);
-      await actualizarInventario(nuevoHistorial);
-      setHistorial(nuevoHistorial);
-      setEditIdx(null);
-      showToast("✓ Registro actualizado");
+      // Actualizar en BD (solo si nadie lo cambió desde que se leyó: version)
+      const result = await actualizarInventario(historial[editIdx], datos);
+      if (result.ok) {
+        setEditIdx(null);
+        setForm(p => ({ ...EMPTY_FORM(), usuario: p.usuario }));
+        showToast("✓ Registro actualizado");
+        await cargarHistorial();
+      } else {
+        showToast("⚠ " + result.error);
+        if (result.conflicto) { setEditIdx(null); await cargarHistorial(); }
+      }
     } else {
       const result = await guardarInventario(datos);
-      const nuevoHistorial = [datos, ...historial];
-      setHistorial(nuevoHistorial);
-      setLastRegistro(datos);
-      setSuccessPop(true);
-      if (!result.ok) showToast("⚠ Guardado localmente (sin conexión a BD)");
+      if (result.ok) {
+        setLastRegistro(datos);
+        setSuccessPop(true);
+        await cargarHistorial();
+      } else {
+        // Sin guardado local: el dato NO quedó registrado y el formulario se conserva
+        showToast("⚠ No se guardó: " + result.error);
+      }
     }
     setGuardando(false);
   };
 
-  const handleEditar = (registro, idx) => {
+  const handleEditar = (registro) => {
+    const idx = historial.findIndex(r => r.id === registro.id);
+    if (idx === -1) return;
     setForm({
       fecha: registro.fecha, hora: registro.hora, pasillo: registro.pasillo,
       posOcupadas: String(registro.posOcupadas), posVacias: String(registro.posVacias),
@@ -345,20 +360,18 @@ export default function InventarioPasillos({ isMobile }) {
   };
 
   const handleCancelarEdicion = () => { setForm(EMPTY_FORM()); setEditIdx(null); setErrors({}); };
-  const handleEliminar        = (idx) => setConfirmDelete(idx);
+  const handleEliminar        = (registro) => { setMotivoAnulacion(""); setConfirmDelete(historial.findIndex(r => r.id === registro.id)); };
 
-  // ── Eliminar: persiste en BD ──
+  // ── Eliminar = ANULAR con motivo (queda en auditoría; nunca se borra) ──
   const confirmarEliminar = async () => {
-    const nuevoHistorial = historial.filter((_, i) => i !== confirmDelete);
-    setHistorial(nuevoHistorial);         // optimistic UI
+    if (!motivoAnulacion.trim()) { showToast("⚠ Escribe el motivo de la anulación"); return; }
+    const registro = historial[confirmDelete];
     setConfirmDelete(null);
-    showToast("🗑 Eliminando registro…");
-    const result = await eliminarInventario(nuevoHistorial);
-    if (result.ok) {
-      showToast("✓ Registro eliminado correctamente");
-    } else {
-      showToast("⚠ Eliminado en pantalla (sin conexión a BD)");
-    }
+    showToast("🗑 Anulando registro…");
+    const result = await anularInventario(registro, motivoAnulacion.trim());
+    if (result.ok) showToast("✓ Registro anulado");
+    else showToast("⚠ " + result.error);
+    await cargarHistorial();
   };
 
   const handleNuevoRegistro = () => { setForm(EMPTY_FORM()); setErrors({}); setSuccessPop(false); setEditIdx(null); };
@@ -721,7 +734,7 @@ export default function InventarioPasillos({ isMobile }) {
             {/* ── Tabla o cargando ── */}
             {loadingHistorial
               ? <div style={{ textAlign:"center", padding:"32px 0", color:"#9CB8AE", fontSize:13 }}>Cargando…</div>
-              : <TablaConsolidada historial={historialPaginado} onEliminar={(idxPag)=>{ const idxReal = (pagActualClamped-1)*pagSize + idxPag; handleEliminar(idxReal); }} onEditar={(r, idxPag)=>{ const idxReal = (pagActualClamped-1)*pagSize + idxPag; handleEditar(r, idxReal); }} isMobile={isMobile} />
+              : <TablaConsolidada historial={historialPaginado} onEliminar={(idxPag)=>{ const reg = historialPaginado[idxPag]; if (reg) handleEliminar(reg); }} onEditar={(r)=>{ handleEditar(r); }} isMobile={isMobile} />
             }
 
             {/* ── Paginador ── */}
@@ -838,14 +851,16 @@ export default function InventarioPasillos({ isMobile }) {
           <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:340, overflow:"hidden", boxShadow:"0 20px 60px rgba(0,0,0,0.2)", animation:"popIn 0.22s cubic-bezier(0.34,1.56,0.64,1)" }}>
             <div style={{ padding:"22px 22px 14px", textAlign:"center" }}>
               <div style={{ fontSize:28, marginBottom:8 }}>🗑</div>
-              <div style={{ fontSize:14, fontWeight:700, color:"#1a2e27", marginBottom:6 }}>¿Eliminar registro #{confirmDelete+1}?</div>
+              <div style={{ fontSize:14, fontWeight:700, color:"#1a2e27", marginBottom:6 }}>¿Anular registro #{confirmDelete+1}?</div>
               <div style={{ fontSize:12, color:"#6B8F80", lineHeight:1.5 }}>
-                Pasillo <strong>{historial[confirmDelete]?.pasillo}</strong> · {historial[confirmDelete]?.fecha}<br/>Esta acción se guardará en la base de datos.
+                Pasillo <strong>{historial[confirmDelete]?.pasillo}</strong> · {historial[confirmDelete]?.fecha}<br/>El registro se anula (no se borra) y queda en la auditoría.
               </div>
+              <textarea value={motivoAnulacion} onChange={e=>setMotivoAnulacion(e.target.value)} rows={2} placeholder="Motivo de la anulación (obligatorio)"
+                style={{ width:"100%", boxSizing:"border-box", marginTop:12, border:"1px solid #D4E5DE", borderRadius:8, padding:"8px 10px", fontSize:12, fontFamily:"inherit", resize:"vertical" }} />
             </div>
             <div style={{ display:"flex", gap:8, padding:"0 22px 22px" }}>
               <button onClick={()=>setConfirmDelete(null)} style={{ flex:1, height:40, borderRadius:9, background:"#F2F8F5", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:13, fontWeight:600, cursor:"pointer" }} onMouseEnter={e=>e.currentTarget.style.background="#E1F5EE"} onMouseLeave={e=>e.currentTarget.style.background="#F2F8F5"}>Cancelar</button>
-              <button onClick={confirmarEliminar} style={{ flex:1, height:40, borderRadius:9, background:"#C0392B", color:"#fff", border:"none", fontSize:13, fontWeight:600, cursor:"pointer" }} onMouseEnter={e=>e.currentTarget.style.background="#922B21"} onMouseLeave={e=>e.currentTarget.style.background="#C0392B"}>Eliminar</button>
+              <button onClick={confirmarEliminar} style={{ flex:1, height:40, borderRadius:9, background:"#C0392B", color:"#fff", border:"none", fontSize:13, fontWeight:600, cursor:"pointer" }} onMouseEnter={e=>e.currentTarget.style.background="#922B21"} onMouseLeave={e=>e.currentTarget.style.background="#C0392B"}>Anular</button>
             </div>
           </div>
           <style>{`@keyframes popIn{from{opacity:0;transform:scale(0.88)}to{opacity:1;transform:scale(1)}}`}</style>

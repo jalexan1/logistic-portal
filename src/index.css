@@ -38,3 +38,6 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 @supports (padding: max(0px)) {
   body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
 }
+
+/* Plataforma L&S: spinner de carga */
+@keyframes spin { to { transform: rotate(360deg); } }

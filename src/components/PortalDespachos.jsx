@@ -1,16 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { BD_CLIENTES, buscarPorNit, buscarPorNombre } from "../services/clientesService";
+import { BD_CLIENTES, buscarPorNombre } from "../services/clientesService";
+import { radicarSolicitud, nuevaLlave } from "../services/solicitudesService";
+import { fechaHoraBogota } from "../utils/fechas";
+import { useAuth } from "./auth/authContext";
 
 // ── Helpers de fecha ──
 const pad = n => String(n).padStart(2, "0");
 const generateFecha = () => {
   const d = new Date();
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-const generateSolicitud = () => {
-  const d = new Date();
-  return `${pad(d.getDate())}${pad(d.getMonth()+1)}${String(d.getFullYear()).slice(2)}${pad(d.getHours())}${pad(d.getMinutes())}`;
 };
 const up = v => typeof v === "string" ? v.toUpperCase() : v;
 
@@ -56,7 +55,7 @@ function SuccessPopup({ visible, meta, onClose, onNewRequest }) {
             Logistics and Services
           </div>
           <div style={{ fontSize:13, color:"rgba(255,255,255,0.85)", lineHeight:1.5, marginBottom:6 }}>
-            Hemos recibido correctamente tu solicitud
+            {meta.esReintento ? "Esta solicitud ya estaba radicada" : "Solicitud radicada en la plataforma"}
           </div>
           <div style={{ display:"inline-block", background:"rgba(255,255,255,0.15)", borderRadius:8, padding:"6px 18px" }}>
             <span style={{ fontSize:11, color:"rgba(255,255,255,0.7)", marginRight:6 }}>N°</span>
@@ -204,6 +203,9 @@ function PdfToExcel({ meta, showToast }) {
   const [pdfMeta, setPdfMeta] = useState({ solicitud:"", fecha:"", area:"", solicitante:"" });
   const [rowErrors, setRowErrors] = useState({});
   const [solicitudYaGenerada, setSolicitudYaGenerada] = useState(false);
+  const [pedidoHeader, setPedidoHeader] = useState(null);
+  const [enviandoPdf, setEnviandoPdf] = useState(false);
+  const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
   const pdfInputRef = useRef(null);
   const isMobileLocal = typeof window !== "undefined" && window.innerWidth < 768;
   const OUTPUT_HEADERS = ["Entrega", "Destinat.", "Nombre destinatario de mercancías", "Lugar-destinatario", "Material", "Cantidad entrega", "UM", "item", "bodega"];
@@ -218,45 +220,108 @@ function PdfToExcel({ meta, showToast }) {
     const destinatarioNit    = bdMatch ? bdMatch[0] : "";
     const destinatarioNombre = nombreDestinatario;
     const destinatarioCiudad = bdMatch ? bdMatch[1].ciudad : "";
-    const skuHeaderIdx = lines.findIndex(l => /^sku$/i.test(l));
-    let startIdx = skuHeaderIdx !== -1 ? skuHeaderIdx + 1 : 0;
-    const headerCols = ["producto", "cantidad", "precio", "sub total", "total"];
-    while (startIdx < lines.length && headerCols.includes(lines[startIdx].toLowerCase())) startIdx++;
-    const STOP = ["subtotal", "total", "generado por", "términos", "política", "click cosmetics", "despacha"];
+
     const SKU_RE = /^[A-Z][A-Z0-9\-]*$|^[A-Z]{2,}$/;
     const BROKEN_SKU_RE = /^([A-Z][A-Z0-9]+)\s*-\s*$/;
     const CANT_RE = /^\d{1,4}[,.]\d{2}$/;
+    const PRICE_RE = /^-?\s*\$\s*[\d.,]+$/;
+    const PCT_RE = /^\d{1,3}[,.]\d{2}%$/;
+    const STOP = ["subtotal", "total", "generado por", "términos", "política", "click cosmetics", "despacha"];
     const isSku = (line) => SKU_RE.test(line) || BROKEN_SKU_RE.test(line);
+
+    // El punto de partida es la primera línea que "parece SKU" tras el
+    // encabezado "Sku" — así no depende de la lista exacta de columnas
+    // (Producto/Cantidad/Precio/Descuento/Sub Total/Total) ni se confunde
+    // con la palabra "Total" del propio encabezado.
+    const skuHeaderIdx = lines.findIndex(l => /^sku$/i.test(l));
+    let startIdx = skuHeaderIdx !== -1 ? skuHeaderIdx + 1 : 0;
+    while (startIdx < lines.length && !isSku(lines[startIdx])) startIdx++;
+
     const parsed = [];
     let i = startIdx;
     while (i < lines.length) {
       const line = lines[i];
       if (STOP.some(sw => line.toLowerCase().startsWith(sw))) break;
       const brokenMatch = BROKEN_SKU_RE.exec(line);
+      let sku, descStart, cantIdx = -1;
       if (brokenMatch) {
         const part1 = brokenMatch[1];
         const part2 = (i + 1 < lines.length) ? lines[i + 1].trim() : "";
-        const sku = `${part1}-${part2}`;
-        let cantidad = 0;
+        sku = `${part1}-${part2}`;
+        descStart = i + 2;
         for (let k = i + 3; k < Math.min(i + 8, lines.length); k++) {
-          if (CANT_RE.test(lines[k])) { cantidad = parseFloat(lines[k].replace(",", ".")); break; }
+          if (CANT_RE.test(lines[k])) { cantIdx = k; break; }
         }
-        parsed.push({ entrega: numeroPedido, destinatario: destinatarioNit, nombre: destinatarioNombre, lugar: destinatarioCiudad, material: sku, cantidad: cantidad || "", um: "BUL", item: "1001", bodega: "021" });
-        i += 2;
-        while (i < lines.length) { if (STOP.some(sw => lines[i].toLowerCase().startsWith(sw))) break; if (isSku(lines[i])) break; i++; }
-        continue;
+      } else if (SKU_RE.test(line)) {
+        sku = line;
+        descStart = i + 1;
+        for (let k = i + 2; k < Math.min(i + 8, lines.length); k++) {
+          if (CANT_RE.test(lines[k])) { cantIdx = k; break; }
+        }
+      } else {
+        i++; continue;
       }
-      if (!SKU_RE.test(line)) { i++; continue; }
-      const sku = line;
-      let cantidad = 0;
-      for (let k = i + 2; k < Math.min(i + 8, lines.length); k++) {
-        if (CANT_RE.test(lines[k])) { cantidad = parseFloat(lines[k].replace(",", ".")); break; }
+      const cantidad = cantIdx !== -1 ? parseFloat(lines[cantIdx].replace(",", ".")) : 0;
+      // Info adicional (solo para el archivo informativo TODA_LA_INFO)
+      const producto = cantIdx !== -1 ? lines.slice(descStart, cantIdx).join(" ") : "";
+      let precio = "", descuentoPct = "", subtotalLinea = "", totalLinea = "";
+      if (cantIdx !== -1) {
+        const after = [lines[cantIdx+1], lines[cantIdx+2], lines[cantIdx+3], lines[cantIdx+4]];
+        if (PRICE_RE.test(after[0]||"")) precio = after[0];
+        if (PCT_RE.test(after[1]||"")) descuentoPct = after[1];
+        if (PRICE_RE.test(after[2]||"")) subtotalLinea = after[2];
+        if (PRICE_RE.test(after[3]||"")) totalLinea = after[3];
       }
-      parsed.push({ entrega: numeroPedido, destinatario: destinatarioNit, nombre: destinatarioNombre, lugar: destinatarioCiudad, material: sku, cantidad: cantidad || "", um: "BUL", item: "1001", bodega: "021" });
-      i++;
+      parsed.push({
+        entrega: numeroPedido, destinatario: destinatarioNit, nombre: destinatarioNombre, lugar: destinatarioCiudad,
+        material: sku, cantidad: cantidad || "", um: "BUL", item: "1001", bodega: "021",
+        producto, precio, descuentoPct, subtotalLinea, totalLinea,
+      });
+      i = brokenMatch ? i + 2 : i + 1;
       while (i < lines.length) { if (STOP.some(sw => lines[i].toLowerCase().startsWith(sw))) break; if (isSku(lines[i])) break; i++; }
     }
-    return { filas: parsed, numeroPedido, nombreDestinatario, bdMatch };
+
+    // ── Info adicional de cabecera del pedido (solo para TODA_LA_INFO) ──
+    const getNext = (idx) => (idx !== -1 && lines[idx + 1]) ? lines[idx + 1].trim() : "";
+    const fechaCreacionIdx = lines.findIndex(l => /^fecha de creaci[oó]n$/i.test(l));
+    const fechaVencIdx     = lines.findIndex(l => /^fecha de vencimiento$/i.test(l));
+    const fechaCreacion    = getNext(fechaCreacionIdx);
+    const fechaVencimiento = getNext(fechaVencIdx);
+
+    let clienteCorreo = "", clienteTelefono = "";
+    if (dirigidoIdx !== -1) {
+      for (let k = dirigidoIdx + 2; k < Math.min(dirigidoIdx + 5, lines.length); k++) {
+        if (!clienteCorreo && lines[k].includes("@")) clienteCorreo = lines[k];
+        else if (!clienteTelefono && /^\+?\d[\d\s]{6,}$/.test(lines[k])) clienteTelefono = lines[k];
+      }
+    }
+
+    const generadoPorIdx = lines.findIndex(l => /^generado por:?$/i.test(l));
+    let generadoPorNombre = "", generadoPorCorreo = "";
+    if (generadoPorIdx !== -1 && lines[generadoPorIdx + 1]) {
+      const raw = lines[generadoPorIdx + 1].replace(/\.$/, "");
+      const parts = raw.split(",");
+      generadoPorNombre = (parts[0] || "").trim();
+      generadoPorCorreo = (parts[1] || "").trim();
+    }
+
+    const findTotalVal = (label) => {
+      let idx = -1;
+      for (let k = lines.length - 1; k >= 0; k--) { if (lines[k].toLowerCase() === label) { idx = k; break; } }
+      return idx !== -1 && lines[idx + 1] ? lines[idx + 1] : "";
+    };
+    const subtotalFactura  = findTotalVal("subtotal");
+    const descuentoFactura = findTotalVal("descuento");
+    const totalFactura     = findTotalVal("total");
+
+    const pedidoHeader = {
+      numeroPedido, fechaCreacion, fechaVencimiento,
+      clienteNombre: nombreDestinatario, clienteCorreo, clienteTelefono,
+      generadoPorNombre, generadoPorCorreo,
+      subtotalFactura, descuentoFactura, totalFactura,
+    };
+
+    return { filas: parsed, numeroPedido, nombreDestinatario, bdMatch, pedidoHeader };
   };
 
   const processPdf = async (file) => {
@@ -280,10 +345,11 @@ function PdfToExcel({ meta, showToast }) {
         const content = await page.getTextContent();
         for (const item of content.items) { const t = (item.str || "").trim(); if (t) fullText += t + "\n"; }
       }
-      const { filas, nombreDestinatario, bdMatch } = parsePdfText(fullText);
-      if (filas.length === 0) { setError("Se leyó el PDF pero no se encontraron filas de productos."); }
+      const { filas, nombreDestinatario, bdMatch, pedidoHeader: header } = parsePdfText(fullText);
+      if (filas.length === 0) { setError("Se leyó el PDF pero no se encontraron filas de productos."); setPedidoHeader(null); }
       else {
         setPdfRows(filas);
+        setPedidoHeader(header);
         if (!bdMatch && nombreDestinatario) setError(`⚠ "${nombreDestinatario}" no se encontró en la BD de clientes. NIT y ciudad quedan en blanco — puedes editarlos.`);
         else setError("");
       }
@@ -294,9 +360,9 @@ function PdfToExcel({ meta, showToast }) {
   const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file) processPdf(file); };
   const updatePdfRow = (idx, key, val) => setPdfRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: val } : r));
 
-  const exportPdfToExcel = () => {
-    if (pdfRows.length === 0) return;
-    if (solicitudYaGenerada) { if (showToast) showToast(`⚠ Solicitud ya generada con: ${fileName}`); setPdfPopup(true); return; }
+  const exportPdfToExcel = async () => {
+    if (pdfRows.length === 0 || enviandoPdf) return;
+    if (solicitudYaGenerada) { if (showToast) showToast(`⚠ Solicitud ya radicada con: ${fileName}`); setPdfPopup(true); return; }
     const metaErrs = {};
     if (!meta.area.trim()) metaErrs["pdf-area"] = true;
     if (!meta.solicitante.trim()) metaErrs["pdf-solicitante"] = true;
@@ -320,20 +386,67 @@ function PdfToExcel({ meta, showToast }) {
       return;
     }
     setRowErrors({});
-    const solicitudFinal = generateSolicitud();
-    const fechaFinal = generateFecha();
-    const metaFinal = { solicitud: solicitudFinal, fecha: fechaFinal, area: meta.area, solicitante: meta.solicitante };
+    // ── 1) Radicar en la base de datos (transacción única). Si falla, NO se genera Excel.
+    if (!llavePdfRef.current) llavePdfRef.current = nuevaLlave();
+    setEnviandoPdf(true);
+    let radicada;
+    try {
+      radicada = await radicarSolicitud({
+        llave: llavePdfRef.current, meta, filas: pdfRows, origen: "PDF",
+        pedidoHeader, archivo: fileName || null,
+      });
+    } catch (ex) {
+      if (showToast) showToast("⚠ " + ex.message);
+      return;
+    } finally {
+      setEnviandoPdf(false);
+    }
+    // ── 2) Excel con el número oficial devuelto por la base
+    const solicitudFinal = radicada.numero;
+    const fechaFinal = fechaHoraBogota(radicada.radicadaAt);
+    const metaFinal = { solicitud: solicitudFinal, fecha: fechaFinal, area: meta.area, solicitante: meta.solicitante, esReintento: radicada.esReintento };
     setPdfMeta(metaFinal);
+    const baseName = `despacho_${(meta.area||"pdf").replace(/\s+/g,"_")}_${solicitudFinal}`;
+
+    // ── Archivo 1: Plantilla operativa (igual de siempre, sin cambios) ──
     const wb = XLSX.utils.book_new();
     const dataRows = pdfRows.map(r => [r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, r.item, r.bodega]);
     const ws = XLSX.utils.aoa_to_sheet([OUTPUT_HEADERS, ...dataRows]);
     ws["!cols"] = [{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
     XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-    XLSX.writeFile(wb, `despacho_${(meta.area||"pdf").replace(/\s+/g,"_")}_${solicitudFinal}.xlsx`);
+    XLSX.writeFile(wb, `${baseName}.xlsx`);
+
+    // ── Archivo 2: TODA_LA_INFO — informativo, no se usa en ningún proceso ──
+    const h = pedidoHeader || {};
+    const infoWb = XLSX.utils.book_new();
+    const infoAoa = [
+      ["INFORMACIÓN DEL PEDIDO"],
+      ["N° Pedido", h.numeroPedido || ""],
+      ["Fecha de creación", h.fechaCreacion || ""],
+      ["Fecha de vencimiento", h.fechaVencimiento || ""],
+      ["Cliente", h.clienteNombre || ""],
+      ["Correo cliente", h.clienteCorreo || ""],
+      ["Teléfono cliente", h.clienteTelefono || ""],
+      ["Generado por", h.generadoPorNombre || ""],
+      ["Correo generador", h.generadoPorCorreo || ""],
+      ["Subtotal factura", h.subtotalFactura || ""],
+      ["Descuento factura", h.descuentoFactura || ""],
+      ["Total factura", h.totalFactura || ""],
+      [],
+      ["DETALLE DE PRODUCTOS"],
+      ["SKU", "Producto", "Cantidad", "Precio unitario", "% Descuento", "Sub Total", "Total", "NIT destinatario", "Nombre destinatario", "Ciudad", "Ítem", "Bodega"],
+      ...pdfRows.map(r => [r.material, r.producto||"", parseFloat(r.cantidad)||0, r.precio||"", r.descuentoPct||"", r.subtotalLinea||"", r.totalLinea||"", r.destinatario, r.nombre, r.lugar, r.item, r.bodega]),
+    ];
+    const infoWs = XLSX.utils.aoa_to_sheet(infoAoa);
+    infoWs["!cols"] = [{wch:16},{wch:34},{wch:10},{wch:16},{wch:12},{wch:16},{wch:16},{wch:16},{wch:24},{wch:16},{wch:8},{wch:8}];
+    XLSX.utils.book_append_sheet(infoWb, infoWs, "Toda la info");
+    // Pequeño delay para que el navegador no bloquee la segunda descarga automática
+    setTimeout(() => XLSX.writeFile(infoWb, `${baseName}_TODA_LA_INFO.xlsx`), 300);
+
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
 
-  const resetPdf = () => { setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); if (pdfInputRef.current) pdfInputRef.current.value = ""; };
+  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); if (pdfInputRef.current) pdfInputRef.current.value = ""; };
 
   const PREVIEW_COLS = [
     { key:"entrega", label:"Entrega", w:"110px" }, { key:"destinatario", label:"NIT", w:"100px" },
@@ -387,9 +500,9 @@ function PdfToExcel({ meta, showToast }) {
             </div>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
               <button onClick={resetPdf} style={{ padding:"8px 16px", fontSize:13, border:"1px solid #E2EDE9", borderRadius:9, background:"#fff", color:"#6B8F80", cursor:"pointer" }} onMouseEnter={e => { e.currentTarget.style.background="#FFF0EE"; e.currentTarget.style.color="#C0392B"; e.currentTarget.style.borderColor="#F5C6C0"; }} onMouseLeave={e => { e.currentTarget.style.background="#fff"; e.currentTarget.style.color="#6B8F80"; e.currentTarget.style.borderColor="#E2EDE9"; }}>Limpiar</button>
-              <button onClick={exportPdfToExcel} style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 22px", fontSize:13, fontWeight:600, border:"none", borderRadius:9, background:"#0F6E56", color:"#fff", cursor:"pointer" }} onMouseEnter={e => e.currentTarget.style.background="#085041"} onMouseLeave={e => e.currentTarget.style.background="#0F6E56"}>
+              <button onClick={exportPdfToExcel} disabled={enviandoPdf} style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 22px", fontSize:13, fontWeight:600, border:"none", borderRadius:9, background:enviandoPdf?"#6FA895":"#0F6E56", color:"#fff", cursor:enviandoPdf?"wait":"pointer" }} onMouseEnter={e => { if (!enviandoPdf) e.currentTarget.style.background="#085041"; }} onMouseLeave={e => { if (!enviandoPdf) e.currentTarget.style.background="#0F6E56"; }}>
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M4 6l3 3 3-3M2 11v.5A1.5 1.5 0 003.5 13h7A1.5 1.5 0 0012 11.5V11" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                Descargar Excel
+                {enviandoPdf ? "Radicando…" : solicitudYaGenerada ? "Ver solicitud" : "Radicar y descargar Excel"}
               </button>
             </div>
           </>
@@ -400,7 +513,7 @@ function PdfToExcel({ meta, showToast }) {
           <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:440, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)", animation:"popIn 0.28s cubic-bezier(0.34,1.56,0.64,1)" }}>
             <div style={{ background:"#0F6E56", padding:"22px 28px 20px", textAlign:"center" }}>
               <div style={{ fontSize:11, color:"rgba(255,255,255,0.65)", fontWeight:600, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10, textAlign:"right" }}>Logistics and Services</div>
-              <div style={{ fontSize:13, color:"rgba(255,255,255,0.85)", lineHeight:1.5, marginBottom:6 }}>Excel generado correctamente desde PDF</div>
+              <div style={{ fontSize:13, color:"rgba(255,255,255,0.85)", lineHeight:1.5, marginBottom:6 }}>{pdfMeta.esReintento ? "Esta solicitud ya estaba radicada" : "Solicitud radicada desde PDF"}</div>
               <div style={{ display:"inline-block", background:"rgba(255,255,255,0.15)", borderRadius:8, padding:"6px 18px" }}>
                 <span style={{ fontSize:11, color:"rgba(255,255,255,0.7)", marginRight:6 }}>N°</span>
                 <span style={{ fontSize:18, color:"#fff", fontWeight:700, letterSpacing:"0.04em" }}>{pdfMeta.solicitud}</span>
@@ -432,9 +545,16 @@ function PdfToExcel({ meta, showToast }) {
 // ── COMPONENTE PRINCIPAL: Portal de Despachos ──
 // ══════════════════════════════════════════════
 export default function PortalDespachos({ isMobile }) {
+  const auth = useAuth();
+  const metaInicial = () => ({
+    area: up(auth?.perfil?.area || ""), fecha: generateFecha(), solicitud: "",
+    solicitante: up(auth?.perfil?.nombre || ""), correo: auth?.perfil?.email || auth?.session?.user?.email || "",
+  });
   const [rows, setRows] = useState([EMPTY_ROW()]);
   const [solicitudFinalizada, setSolicitudFinalizada] = useState(false);
-  const [meta, setMeta] = useState({ area:"", fecha:generateFecha(), solicitud:"", solicitante:"", correo:"" });
+  const [meta, setMeta] = useState(metaInicial);
+  const [enviando, setEnviando] = useState(false);
+  const llaveRef = useRef(null);   // llave de idempotencia de la solicitud en curso
   const [errors, setErrors] = useState({});
   const [popup, setPopup] = useState(false);
   const [toast, setToast] = useState({ visible:false, message:"" });
@@ -540,10 +660,11 @@ export default function PortalDespachos({ isMobile }) {
 
   const deleteRow = (id) => { if (rows.length === 1) { setRows([EMPTY_ROW()]); setErrors({}); return; } setRows(p => p.filter(r => r.id !== id)); setErrors(p => { const n = { ...p }; Object.keys(n).filter(k => k.startsWith(id)).forEach(k => delete n[k]); return n; }); };
   const duplicateRow = (id) => { const row = rows.find(r => r.id === id); if (!row) return; const newRow = { ...row, id: crypto.randomUUID() }; setRows(p => { const idx = p.findIndex(r => r.id === id); const next = [...p]; next.splice(idx + 1, 0, newRow); return next; }); };
-  const clearAll = () => { setRows([EMPTY_ROW()]); setMeta({ area:"", fecha:generateFecha(), solicitud:"", solicitante:"", correo:"" }); setErrors({}); setSolicitudFinalizada(false); };
-  const newRequest = () => { setRows([EMPTY_ROW()]); setMeta({ area:"", fecha:generateFecha(), solicitud:"", solicitante:"", correo:"" }); setErrors({}); setPopup(false); setSolicitudFinalizada(false); };
+  const clearAll = () => { llaveRef.current = null; setRows([EMPTY_ROW()]); setMeta(metaInicial()); setErrors({}); setSolicitudFinalizada(false); };
+  const newRequest = () => { llaveRef.current = null; setRows([EMPTY_ROW()]); setMeta(metaInicial()); setErrors({}); setPopup(false); setSolicitudFinalizada(false); };
 
-  const exportExcel = useCallback(() => {
+  const exportExcel = useCallback(async () => {
+    if (enviando) return;
     const metaValidation = {};
     if (!meta.area.trim()) metaValidation["meta-area"] = true;
     if (!meta.solicitante.trim()) metaValidation["meta-solicitante"] = true;
@@ -564,9 +685,22 @@ export default function PortalDespachos({ isMobile }) {
     syncedRows.forEach(r => Object.assign(allErrors, validateRowPure(r, syncedRows)));
     if (Object.keys(allErrors).length > 0) { setErrors(allErrors); showToast("⚠ Hay campos requeridos incompletos o registros duplicados"); return; }
     setErrors({});
-    const solicitudFinal = solicitudFinalizada ? meta.solicitud : generateSolicitud();
-    const fechaFinal = generateFecha();
-    const metaFinal = { ...meta, solicitud: solicitudFinal, fecha: fechaFinal };
+    // ── 1) Radicar en la base (una transacción). Ya radicada → solo re-descarga el Excel.
+    let metaFinal = meta;
+    if (!solicitudFinalizada) {
+      if (!llaveRef.current) llaveRef.current = nuevaLlave();
+      setEnviando(true);
+      try {
+        const r = await radicarSolicitud({ llave: llaveRef.current, meta, filas: syncedRows, origen: "MANUAL" });
+        metaFinal = { ...meta, solicitud: r.numero, fecha: fechaHoraBogota(r.radicadaAt), esReintento: r.esReintento };
+      } catch (ex) {
+        showToast("⚠ " + ex.message);
+        return;
+      } finally {
+        setEnviando(false);
+      }
+    }
+    const solicitudFinal = metaFinal.solicitud;
     setMeta(metaFinal);
     setSolicitudFinalizada(true);
     const wb = XLSX.utils.book_new();
@@ -578,9 +712,9 @@ export default function PortalDespachos({ isMobile }) {
     const fname = `despacho_${(meta.area||"envio").replace(/\s+/g,"_")}_${solicitudFinal}.xlsx`;
     XLSX.writeFile(wb, fname);
     setPopup(true);
-  }, [rows, meta]);
+  }, [rows, meta, enviando, solicitudFinalizada]);
 
-  const downloadManual = () => { const link = document.createElement("a"); link.href = "/manual_portal_despachos.html"; link.download = "Manual_Portal_Despachos_Logistics_and_Services.html"; link.click(); };
+  const downloadManual = () => { const link = document.createElement("a"); link.href = `${import.meta.env.BASE_URL}manual_portal_despachos.html`; link.download = "Manual_Portal_Despachos_Logistics_and_Services.html"; link.click(); };
   const filledRows = rows.filter(r => r.entrega || r.material || r.destinatario).length;
 
   const inputBase = { width:"100%", height:38, padding:"0 10px", fontSize:14, border:"1px solid #D4E5DE", borderRadius:8, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box", WebkitAppearance:"none" };
@@ -726,9 +860,9 @@ export default function PortalDespachos({ isMobile }) {
           Limpiar
         </button>
         {!isMobile && <div style={{ flex:1 }} />}
-        <button onClick={exportExcel} style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:isMobile?"11px 20px":"9px 22px", fontSize:13, fontWeight:600, border:"none", borderRadius:9, background:"#0F6E56", color:"#fff", cursor:"pointer", flex:isMobile?"1 0 100%":"none" }} onMouseEnter={e => e.currentTarget.style.background="#085041"} onMouseLeave={e => e.currentTarget.style.background="#0F6E56"}>
+        <button onClick={exportExcel} disabled={enviando} style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:isMobile?"11px 20px":"9px 22px", fontSize:13, fontWeight:600, border:"none", borderRadius:9, background:enviando?"#6FA895":"#0F6E56", color:"#fff", cursor:enviando?"wait":"pointer", flex:isMobile?"1 0 100%":"none" }} onMouseEnter={e => { if (!enviando) e.currentTarget.style.background="#085041"; }} onMouseLeave={e => { if (!enviando) e.currentTarget.style.background="#0F6E56"; }}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M4 6l3 3 3-3M2 11v.5A1.5 1.5 0 003.5 13h7A1.5 1.5 0 0012 11.5V11" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          Descargar .xlsx
+          {enviando ? "Radicando…" : solicitudFinalizada ? "Descargar .xlsx de nuevo" : "Radicar y descargar .xlsx"}
         </button>
       </div>
 
@@ -741,7 +875,7 @@ export default function PortalDespachos({ isMobile }) {
       <PdfToExcel meta={meta} showToast={showToast} />
 
       {/* Footer */}
-      <div style={{ marginTop:32, textAlign:"center", fontSize:11, color:"#9CB8AE" }}>Logistics and Services · Portal de despachos · El archivo se genera localmente en tu equipo</div>
+      <div style={{ marginTop:32, textAlign:"center", fontSize:11, color:"#9CB8AE" }}>Logistics and Services · Portal de despachos · Cada solicitud queda registrada en la plataforma con su número oficial</div>
       <div style={{ marginTop:6, textAlign:"center", fontSize:11, color:"#0F6E56", fontWeight:600 }}>Made by Logistics and Services © 2026</div>
 
       {/* Toast */}
