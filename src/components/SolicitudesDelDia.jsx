@@ -12,11 +12,9 @@ import { listarSolicitudes, obtenerLineas } from "../services/solicitudesService
 import { fechaHoraBogota, horaBogota, isoFechaBogota } from "../utils/fechas";
 
 const ESTADO_UI = {
-  RADICADA:        { label: "Radicada",        color: "#2563EB", bg: "#EFF6FF" },
-  EN_ALISTAMIENTO: { label: "En alistamiento", color: "#B45309", bg: "#FFFBEB" },
-  DESPACHADA:      { label: "Despachada",      color: "#7C3AED", bg: "#F5F3FF" },
-  ENTREGADA:       { label: "Entregada",       color: "#0F6E56", bg: "#E1F5EE" },
-  ANULADA:         { label: "Anulada",         color: "#C0392B", bg: "#FFF0EE" },
+  RADICADA:  { label: "Radicada",  color: "#2563EB", bg: "#EFF6FF" },
+  PROCESADA: { label: "Procesada", color: "#0F6E56", bg: "#E1F5EE" },
+  ANULADA:   { label: "Anulada",   color: "#C0392B", bg: "#FFF0EE" },   // solo históricas
 };
 
 const hoy = () => isoFechaBogota(new Date());
@@ -136,7 +134,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                     <td style={{ ...td, textAlign: "right" }}>{num(sol.total_lineas)}</td>
                     <td style={{ ...td, textAlign: "right" }}>{num(sol.total_unidades)}</td>
                     <td style={td}>
-                      <span title={sol.motivo_anulacion || ""} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "3px 10px", borderRadius: 20 }}>{est.label}</span>
+                      <span title={sol.motivo_anulacion || (sol.lote_numero ? `Bloque ${sol.lote_numero}` : "")} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "3px 10px", borderRadius: 20 }}>{est.label}</span>
                     </td>
                     <td style={{ ...td, textAlign: "center" }}>
                       <button onClick={() => descargarExcel(sol)} disabled={bajando === sol.id} title={`Descargar de nuevo el Excel de ${sol.numero}`}

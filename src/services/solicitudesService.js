@@ -61,7 +61,7 @@ export async function radicarSolicitud({ llave, meta, filas, origen, pedidoHeade
 
 export async function listarSolicitudes({ desde, hasta, estado, texto, limite = 200 } = {}) {
   let q = despachos().from("vw_solicitudes")
-    .select("id,numero,version,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,motivo_anulacion")
+    .select("id,numero,version,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,motivo_anulacion,lote_id,lote_numero,procesada_at")
     .order("radicada_at", { ascending: false }).limit(limite);
   if (desde)  q = q.gte("fecha_radicacion", desde);
   if (hasta)  q = q.lte("fecha_radicacion", hasta);
@@ -91,16 +91,57 @@ export async function obtenerEventos(solicitudId) {
   return data;
 }
 
-export async function listarTransiciones() {
-  const { data, error } = await despachos().from("transiciones").select("estado_origen,estado_destino");
+// ── Procesamiento por bloque (lote) ──────────────────────────────────────
+// Solo hay dos estados: RADICADA → PROCESADA. El paso se hace SIEMPRE por
+// bloque (una o varias solicitudes) con despachos.fn_procesar_lote: una sola
+// transacción (todas o ninguna) e idempotente por llave, igual que la radicación.
+
+/** Devuelve { id, numero, totalSolicitudes, totalLineas, totalUnidades, procesadoAt, esReintento }. */
+export async function procesarLote({ llave, solicitudIds, comentario }) {
+  const { data, error } = await despachos().rpc("fn_procesar_lote", {
+    p_solicitud_ids: solicitudIds, p_idempotency_key: llave, p_comentario: comentario || null,
+  });
+  if (error) throw new Error(mensajeError(error));
+  const r = Array.isArray(data) ? data[0] : data;
+  if (!r?.numero) throw new Error("El servidor no confirmó el procesamiento. Reintente: no se duplicará.");
+  return {
+    id: r.lote_id, numero: r.numero, totalSolicitudes: r.total_solicitudes, totalLineas: r.total_lineas,
+    totalUnidades: Number(r.total_unidades), procesadoAt: r.procesado_at, esReintento: r.es_reintento,
+  };
+}
+
+export async function listarLotes({ desde, hasta, limite = 100 } = {}) {
+  let q = despachos().from("vw_lotes")
+    .select("id,numero,total_solicitudes,total_lineas,total_unidades,comentario,procesado_at,fecha_proceso,procesado_por,revertido_at,motivo_reversion")
+    .order("procesado_at", { ascending: false }).limit(limite);
+  if (desde) q = q.gte("fecha_proceso", desde);
+  if (hasta) q = q.lte("fecha_proceso", hasta);
+  const { data, error } = await q;
   if (error) throw new Error(mensajeError(error));
   return data;
 }
 
-export async function cambiarEstado({ solicitudId, estadoNuevo, version, comentario }) {
-  const { data, error } = await despachos().rpc("fn_cambiar_estado", {
-    p_solicitud_id: solicitudId, p_estado_nuevo: estadoNuevo, p_version: version, p_comentario: comentario || null,
-  });
+// Todas las líneas de un bloque, ordenadas por solicitud y línea.
+// Se pagina de a 1000 (límite por consulta del API) para no truncar bloques grandes.
+export async function obtenerLineasLote(loteId) {
+  const PAGINA = 1000;
+  const todas = [];
+  for (let desde = 0; ; desde += PAGINA) {
+    const { data, error } = await despachos().from("vw_lote_lineas")
+      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega")
+      .eq("lote_id", loteId)
+      .order("solicitud_numero").order("linea_nro").order("linea_id")
+      .range(desde, desde + PAGINA - 1);
+    if (error) throw new Error(mensajeError(error));
+    todas.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return todas;
+}
+
+/** Solo administrador: devuelve a RADICADA todas las solicitudes del bloque. */
+export async function revertirLote({ loteId, motivo }) {
+  const { data, error } = await despachos().rpc("fn_revertir_lote", { p_lote_id: loteId, p_motivo: motivo });
   if (error) throw new Error(mensajeError(error));
   return Array.isArray(data) ? data[0] : data;
 }
