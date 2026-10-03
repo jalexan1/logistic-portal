@@ -21,7 +21,7 @@ const useIsMobile = () => {
 const VISTAS = [
   {
     id: "despachos",
-    label: "Portal de despachos",
+    label: "Despachos",
     labelCorto: "Despachos",
     requiere: ["DESPACHOS"],
     icon: (
@@ -47,8 +47,8 @@ const VISTAS = [
   },
   {
     id: "inventario",
-    label: "Inventario de Pasillos",
-    labelCorto: "Inventario",
+    label: "Pasillos",
+    labelCorto: "Pasillos",
     requiere: ["INVENTARIO"],
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -90,8 +90,15 @@ export default function App() {
   })();
   const [vista, setVista] = useState(inicial);
 
-  const vistaActual = vistas.find(v => v.id === vista);
   const nombreUsuario = perfil?.nombre || perfil?.email || "Usuario";
+
+  // Manual de usuario (antes estaba dentro de la pantalla de Despachos)
+  const descargarManual = () => {
+    const link = document.createElement("a");
+    link.href = `${import.meta.env.BASE_URL}manual_portal_despachos.html`;
+    link.download = "Manual_Portal_Despachos_Logistics_and_Services.html";
+    link.click();
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#F7F9F8", fontFamily: "'DM Sans','Helvetica Neue',sans-serif" }}>
@@ -104,25 +111,13 @@ export default function App() {
         <div style={{ maxWidth: 1140, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between",
           flexWrap: isMobile ? "wrap" : "nowrap", minHeight: 56, rowGap: 0, padding: isMobile ? "8px 0 0" : 0 }}>
 
-          {/* Logo + nombre empresa */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <svg width="17" height="17" viewBox="0 0 18 18" fill="none">
-                <rect x="2" y="3" width="14" height="2" rx="1" fill="white"/>
-                <rect x="2" y="8" width="14" height="2" rx="1" fill="white"/>
-                <rect x="2" y="13" width="9" height="2" rx="1" fill="white"/>
-              </svg>
-            </div>
-            <div>
-              <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 600, color: "#0F6E56", lineHeight: 1.2 }}>
-                Logistics and Services
-              </div>
-              {!isMobile && (
-                <div style={{ fontSize: 11, color: "#6B8F80" }}>
-                  {vistaActual?.label}
-                </div>
-              )}
-            </div>
+          {/* Logo (sin texto: el espacio es para el menú) */}
+          <div title="Logistics and Services" style={{ width: 32, height: 32, borderRadius: 8, background: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="17" height="17" viewBox="0 0 18 18" fill="none">
+              <rect x="2" y="3" width="14" height="2" rx="1" fill="white"/>
+              <rect x="2" y="8" width="14" height="2" rx="1" fill="white"/>
+              <rect x="2" y="13" width="9" height="2" rx="1" fill="white"/>
+            </svg>
           </div>
 
           {/* Navegación de pestañas */}
@@ -155,11 +150,18 @@ export default function App() {
 
           {/* Usuario + regreso a la plataforma */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-            <a href={PLATAFORMA_URL} title="Volver a la plataforma (todas las aplicaciones)"
-              style={{ display: "flex", alignItems: "center", gap: 5, padding: isMobile ? "6px 8px" : "7px 11px", fontSize: isMobile ? 11 : 12, fontWeight: 600,
+            {roles?.DESPACHOS && (
+              <button onClick={descargarManual} title="Descargar manual de usuario"
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: isMobile ? "6px 8px" : "7px 11px", fontSize: isMobile ? 11 : 12, fontWeight: 600,
+                  border: "1px solid #E2EDE9", borderRadius: 9, color: "#0F6E56", background: "#fff", cursor: "pointer" }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 2h4.5a2 2 0 0 1 2 2v9a1.5 1.5 0 0 0-1.5-1.5H3V2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/><path d="M13 2H8.5a2 2 0 0 0-2 2v9a1.5 1.5 0 0 1 1.5-1.5H13V2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/><path d="M8 4v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+                {!isMobile && "Manual"}
+              </button>
+            )}
+            <a href={PLATAFORMA_URL} title="Plataforma: volver a todas las aplicaciones" aria-label="Plataforma"
+              style={{ display: "flex", alignItems: "center", gap: 5, padding: isMobile ? "6px 8px" : "7px 9px", fontSize: isMobile ? 11 : 12, fontWeight: 600,
                 border: "1px solid #E2EDE9", borderRadius: 9, color: "#6B8F80", textDecoration: "none", background: "#fff" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.3"/><rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.3"/><rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.3"/><rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.3"/></svg>
-              {!isMobile && "Plataforma"}
             </a>
             {!isMobile && (
               <div style={{ textAlign: "right", lineHeight: 1.2, maxWidth: 160 }}>

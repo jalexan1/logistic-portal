@@ -714,7 +714,6 @@ export default function PortalDespachos({ isMobile }) {
     setPopup(true);
   }, [rows, meta, enviando, solicitudFinalizada]);
 
-  const downloadManual = () => { const link = document.createElement("a"); link.href = `${import.meta.env.BASE_URL}manual_portal_despachos.html`; link.download = "Manual_Portal_Despachos_Logistics_and_Services.html"; link.click(); };
   const filledRows = rows.filter(r => r.entrega || r.material || r.destinatario).length;
 
   const inputBase = { width:"100%", height:38, padding:"0 10px", fontSize:14, border:"1px solid #D4E5DE", borderRadius:8, background:"#fff", color:"#1a2e27", outline:"none", boxSizing:"border-box", WebkitAppearance:"none" };
@@ -722,22 +721,14 @@ export default function PortalDespachos({ isMobile }) {
 
   return (
     <div style={{ paddingBottom:60 }}>
-      {/* Action bar header */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", marginBottom:16, gap:8 }}>
-        {filledRows > 0 && (
+      {/* Contador de líneas (el Manual ahora está en la barra de menú) */}
+      {filledRows > 0 && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", marginBottom:12 }}>
           <span style={{ fontSize:12, color:"#0F6E56", background:"#E1F5EE", padding:"4px 10px", borderRadius:20, fontWeight:500 }}>
             {filledRows} línea{filledRows!==1?"s":""}
           </span>
-        )}
-        <button onClick={downloadManual} title="Descargar manual de usuario"
-          style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 14px", fontSize:12, fontWeight:600, border:"1px solid #D4E5DE", borderRadius:8, background:"#fff", color:"#0F6E56", cursor:"pointer", transition:"all 0.2s" }}
-          onMouseEnter={e => { e.currentTarget.style.background="#F2F8F5"; e.currentTarget.style.borderColor="#0F6E56"; }}
-          onMouseLeave={e => { e.currentTarget.style.background="#fff"; e.currentTarget.style.borderColor="#D4E5DE"; }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 2h4.5a2 2 0 0 1 2 2v9a1.5 1.5 0 0 0-1.5-1.5H3V2z" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M13 2H8.5a2 2 0 0 0-2 2v9a1.5 1.5 0 0 1 1.5-1.5H13V2z" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M8 4v7" stroke="#0F6E56" strokeWidth="1" strokeLinecap="round"/></svg>
-          {!isMobile && "Manual"}
-        </button>
-      </div>
+        </div>
+      )}
 
       {/* Meta */}
       <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E2EDE9", padding:isMobile?"14px":"18px 22px", marginBottom:16 }}>
@@ -876,7 +867,6 @@ export default function PortalDespachos({ isMobile }) {
 
       {/* Footer */}
       <div style={{ marginTop:32, textAlign:"center", fontSize:11, color:"#9CB8AE" }}>Logistics and Services · Portal de despachos · Cada solicitud queda registrada en la plataforma con su número oficial</div>
-      <div style={{ marginTop:6, textAlign:"center", fontSize:11, color:"#0F6E56", fontWeight:600 }}>Made by Logistics and Services © 2026</div>
 
       {/* Toast */}
       <div style={{ position:"fixed", bottom:20, left:"50%", transform:`translateX(-50%) translateY(${toast.visible?0:10}px)`, zIndex:1000, background:"#1a2e27", color:"#fff", padding:"10px 20px", borderRadius:24, fontSize:13, fontWeight:500, opacity:toast.visible?1:0, transition:"all 0.25s ease", pointerEvents:"none", whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.2)", maxWidth:"90vw", textAlign:"center" }}>

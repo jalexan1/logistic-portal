@@ -838,7 +838,6 @@ export default function InventarioPasillos({ isMobile }) {
 
       {/* Footer */}
       <div style={{ textAlign:"center", fontSize:11, color:"#9CB8AE" }}>Logistics and Services · Inventario de Pasillos</div>
-      <div style={{ marginTop:4, textAlign:"center", fontSize:11, color:"#0F6E56", fontWeight:600 }}>Made by Logistics and Services © 2026</div>
 
       {/* Toast */}
       <div style={{ position:"fixed", bottom:20, left:"50%", transform:`translateX(-50%) translateY(${toast.visible?0:10}px)`, zIndex:1000, background:"#1a2e27", color:"#fff", padding:"10px 20px", borderRadius:24, fontSize:13, fontWeight:500, opacity:toast.visible?1:0, transition:"all 0.25s ease", pointerEvents:"none", whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.2)", maxWidth:"90vw", textAlign:"center" }}>
