@@ -4,6 +4,7 @@ import { BD_CLIENTES, buscarPorNombre } from "../services/clientesService";
 import { radicarSolicitud, nuevaLlave } from "../services/solicitudesService";
 import { fechaHoraBogota } from "../utils/fechas";
 import { useAuth } from "./auth/authContext";
+import SolicitudesDelDia from "./SolicitudesDelDia";
 
 // ── Helpers de fecha ──
 const pad = n => String(n).padStart(2, "0");
@@ -193,7 +194,16 @@ function MobileRowCard({ row, idx, errors, onUpdate, onDelete, onDuplicate }) {
 }
 
 // ── Componente PDF → Excel ──
-function PdfToExcel({ meta, showToast }) {
+function PdfToExcel({ meta, showToast, onRadicada }) {
+  // Mostrar / ocultar la sección (se recuerda la preferencia en este navegador)
+  const [abierto, setAbierto] = useState(() => {
+    try { return localStorage.getItem("despachos_pdf_abierto") === "1"; } catch { return false; }
+  });
+  const alternar = () => setAbierto(v => {
+    const n = !v;
+    try { localStorage.setItem("despachos_pdf_abierto", n ? "1" : "0"); } catch { /* sin almacenamiento: no pasa nada */ }
+    return n;
+  });
   const [pdfRows, setPdfRows] = useState([]);
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -406,6 +416,7 @@ function PdfToExcel({ meta, showToast }) {
     const fechaFinal = fechaHoraBogota(radicada.radicadaAt);
     const metaFinal = { solicitud: solicitudFinal, fecha: fechaFinal, area: meta.area, solicitante: meta.solicitante, esReintento: radicada.esReintento };
     setPdfMeta(metaFinal);
+    if (onRadicada) onRadicada();   // refresca la tabla de solicitudes del día
     const baseName = `despacho_${(meta.area||"pdf").replace(/\s+/g,"_")}_${solicitudFinal}`;
 
     // ── Archivo 1: Plantilla operativa (igual de siempre, sin cambios) ──
@@ -456,15 +467,29 @@ function PdfToExcel({ meta, showToast }) {
   ];
 
   return (
-    <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E2EDE9", overflow:"hidden", marginBottom:14 }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 16px", borderBottom:"1px solid #E2EDE9" }}>
-        <span style={{ fontSize:10, fontWeight:600, color:"#6B8F80", textTransform:"uppercase", letterSpacing:"0.07em" }}>Excel desde PDF</span>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          {pdfRows.length > 0 && <span style={{ fontSize:12, color:"#0F6E56", background:"#E1F5EE", padding:"3px 10px", borderRadius:20, fontWeight:500 }}>{pdfRows.length} línea{pdfRows.length !== 1 ? "s" : ""}</span>}
-          <span style={{ fontSize:11, color:"#0F6E56", background:"#E1F5EE", padding:"3px 10px", borderRadius:20, fontWeight:500 }}>nueva función</span>
+    <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #F59E0B", boxShadow:"0 0 0 3px rgba(245,158,11,0.12)", overflow:"hidden", marginTop:20 }}>
+      {/* Encabezado resaltado: siempre visible aunque la sección esté oculta */}
+      <div onClick={alternar} title={abierto ? "Ocultar Excel desde PDF" : "Mostrar Excel desde PDF"}
+        style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 16px", background:"#FFFBEB", borderBottom: abierto ? "1px solid #FCD9A0" : "none", cursor:"pointer" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:0 }}>
+          <div style={{ width:30, height:30, borderRadius:8, background:"#F59E0B", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M4 2h6l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="#fff" strokeWidth="1.4" strokeLinejoin="round"/><path d="M10 2v4h4" stroke="#fff" strokeWidth="1.4" strokeLinejoin="round"/></svg>
+          </div>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#92400E" }}>Excel desde PDF</div>
+            {!isMobileLocal && <div style={{ fontSize:11, color:"#B45309" }}>Cargue el PDF del pedido y radique la solicitud sin digitar las líneas</div>}
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          {pdfRows.length > 0 && <span style={{ fontSize:12, color:"#92400E", background:"#FDE68A", padding:"3px 10px", borderRadius:20, fontWeight:600 }}>{pdfRows.length} línea{pdfRows.length !== 1 ? "s" : ""}</span>}
+          <button type="button" onClick={(e) => { e.stopPropagation(); alternar(); }} aria-expanded={abierto}
+            style={{ display:"flex", alignItems:"center", gap:6, height:32, padding:"0 12px", fontSize:12, fontWeight:700, border:"1px solid #F59E0B", borderRadius:8, background: abierto ? "#fff" : "#F59E0B", color: abierto ? "#B45309" : "#fff", cursor:"pointer", whiteSpace:"nowrap" }}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ transform: abierto ? "rotate(180deg)" : "none", transition:"transform 0.2s" }}><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            {abierto ? "Ocultar" : "Mostrar"}
+          </button>
         </div>
       </div>
-      <div style={{ padding: isMobileLocal ? "14px 12px" : "16px 20px" }}>
+      <div style={{ padding: isMobileLocal ? "14px 12px" : "16px 20px", display: abierto ? "block" : "none" }}>
         <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop} onClick={() => pdfInputRef.current?.click()}
           style={{ border:`1.5px dashed ${dragOver ? "#0F6E56" : "#C5DDD4"}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background: dragOver ? "#F0FBF6" : "#F7FCF9", cursor:"pointer", marginBottom:14, transition:"border-color 0.2s, background 0.2s" }}>
           <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={(e) => { if (e.target.files[0]) processPdf(e.target.files[0]); }} />
@@ -557,6 +582,7 @@ export default function PortalDespachos({ isMobile }) {
   const llaveRef = useRef(null);   // llave de idempotencia de la solicitud en curso
   const [errors, setErrors] = useState({});
   const [popup, setPopup] = useState(false);
+  const [recarga, setRecarga] = useState(0);   // +1 cada vez que se radica → refresca la tabla del día
   const [toast, setToast] = useState({ visible:false, message:"" });
   const tableRef = useRef(null);
   const timerRef = useRef(null);
@@ -693,6 +719,7 @@ export default function PortalDespachos({ isMobile }) {
       try {
         const r = await radicarSolicitud({ llave: llaveRef.current, meta, filas: syncedRows, origen: "MANUAL" });
         metaFinal = { ...meta, solicitud: r.numero, fecha: fechaHoraBogota(r.radicadaAt), esReintento: r.esReintento };
+        setRecarga(n => n + 1);
       } catch (ex) {
         showToast("⚠ " + ex.message);
         return;
@@ -857,16 +884,11 @@ export default function PortalDespachos({ isMobile }) {
         </button>
       </div>
 
-      {/* PDF → Excel section */}
-      <div style={{ display:"flex", alignItems:"center", gap:12, margin:"32px 0 16px" }}>
-        <div style={{ flex:1, height:1, background:"#E2EDE9" }} />
-        <span style={{ fontSize:10, fontWeight:600, color:"#9CB8AE", textTransform:"uppercase", letterSpacing:"0.08em", whiteSpace:"nowrap" }}>Excel desde PDF</span>
-        <div style={{ flex:1, height:1, background:"#E2EDE9" }} />
-      </div>
-      <PdfToExcel meta={meta} showToast={showToast} />
+      {/* Excel desde PDF (recuadro resaltado, con Mostrar / Ocultar) */}
+      <PdfToExcel meta={meta} showToast={showToast} onRadicada={() => setRecarga(n => n + 1)} />
 
-      {/* Footer */}
-      <div style={{ marginTop:32, textAlign:"center", fontSize:11, color:"#9CB8AE" }}>Logistics and Services · Portal de despachos · Cada solicitud queda registrada en la plataforma con su número oficial</div>
+      {/* Solicitudes radicadas: por defecto las de hoy, con filtro por rango de fechas */}
+      <SolicitudesDelDia isMobile={isMobile} recarga={recarga} showToast={showToast} />
 
       {/* Toast */}
       <div style={{ position:"fixed", bottom:20, left:"50%", transform:`translateX(-50%) translateY(${toast.visible?0:10}px)`, zIndex:1000, background:"#1a2e27", color:"#fff", padding:"10px 20px", borderRadius:24, fontSize:13, fontWeight:500, opacity:toast.visible?1:0, transition:"all 0.25s ease", pointerEvents:"none", whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.2)", maxWidth:"90vw", textAlign:"center" }}>
