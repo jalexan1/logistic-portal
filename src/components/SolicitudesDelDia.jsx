@@ -54,11 +54,11 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
     setBajando(sol.id);
     try {
       const lineas = await obtenerLineas(sol.id);
-      const headers = ["Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
-      const rows = lineas.map(l => [l.entrega, l.destinatario_nit, l.destinatario_nombre, l.destinatario_ciudad, l.material, Number(l.cantidad), l.um, l.item, l.bodega]);
+      const headers = ["Fecha y hora","Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
+      const rows = lineas.map(l => [fechaHoraBogota(sol.radicada_at), l.entrega, l.destinatario_nit, l.destinatario_nombre, l.destinatario_ciudad, l.material, Number(l.cantidad), l.um, l.item, l.bodega]);
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-      ws["!cols"] = [{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
+      ws["!cols"] = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
       XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
       XLSX.writeFile(wb, `despacho_${(sol.area_solicitante || "envio").replace(/\s+/g, "_")}_${sol.numero}.xlsx`);
     } catch (e) {

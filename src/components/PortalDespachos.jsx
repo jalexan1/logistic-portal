@@ -218,7 +218,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
   const pdfInputRef = useRef(null);
   const isMobileLocal = typeof window !== "undefined" && window.innerWidth < 768;
-  const OUTPUT_HEADERS = ["Entrega", "Destinat.", "Nombre destinatario de mercancías", "Lugar-destinatario", "Material", "Cantidad entrega", "UM", "item", "bodega"];
+  const OUTPUT_HEADERS = ["Fecha y hora", "Entrega", "Destinat.", "Nombre destinatario de mercancías", "Lugar-destinatario", "Material", "Cantidad entrega", "UM", "item", "bodega"];
 
   const parsePdfText = (fullText) => {
     const lines = fullText.split("\n").map(l => l.trim()).filter(Boolean);
@@ -419,11 +419,11 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     if (onRadicada) onRadicada();   // refresca la tabla de solicitudes del día
     const baseName = `despacho_${(meta.area||"pdf").replace(/\s+/g,"_")}_${solicitudFinal}`;
 
-    // ── Archivo 1: Plantilla operativa (igual de siempre, sin cambios) ──
+    // ── Archivo 1: Plantilla operativa (fecha y hora de radicación en la columna A + columnas de siempre) ──
     const wb = XLSX.utils.book_new();
-    const dataRows = pdfRows.map(r => [r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, r.item, r.bodega]);
+    const dataRows = pdfRows.map(r => [fechaFinal, r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, r.item, r.bodega]);
     const ws = XLSX.utils.aoa_to_sheet([OUTPUT_HEADERS, ...dataRows]);
-    ws["!cols"] = [{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
+    ws["!cols"] = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
     XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
     XLSX.writeFile(wb, `${baseName}.xlsx`);
 
@@ -731,10 +731,10 @@ export default function PortalDespachos({ isMobile }) {
     setMeta(metaFinal);
     setSolicitudFinalizada(true);
     const wb = XLSX.utils.book_new();
-    const headers = ["Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
-    const dataRows = syncedRows.map(r => [r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, parseInt(r.item)||0, r.bodega]);
+    const headers = ["Fecha y hora","Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
+    const dataRows = syncedRows.map(r => [metaFinal.fecha, r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, parseInt(r.item)||0, r.bodega]);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-    ws["!cols"] = [{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
+    ws["!cols"] = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
     XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
     const fname = `despacho_${(meta.area||"envio").replace(/\s+/g,"_")}_${solicitudFinal}.xlsx`;
     XLSX.writeFile(wb, fname);

@@ -42,18 +42,20 @@ const hace = (dias) => { const d = new Date(); d.setDate(d.getDate() - dias); re
 const num = (n) => Number(n || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 });
 const plural = (n, uno, varios) => `${num(n)} ${Number(n) === 1 ? uno : varios}`;
 
-const HEADERS_PLANTILLA = ["Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
-const filaPlantilla = (l) => [l.entrega, l.destinatario_nit, l.destinatario_nombre, l.destinatario_ciudad, l.material, Number(l.cantidad), l.um, l.item, l.bodega];
-const COLS_PLANTILLA = [{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
+// La columna A es la fecha y hora de radicación de la solicitud (hora Colombia)
+const HEADERS_PLANTILLA = ["Fecha y hora","Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
+// radicadaAt: se pasa cuando la línea no la trae (descarga de una sola solicitud)
+const filaPlantilla = (l, radicadaAt = l.radicada_at) => [radicadaAt ? fechaHoraBogota(radicadaAt) : "", l.entrega, l.destinatario_nit, l.destinatario_nombre, l.destinatario_ciudad, l.material, Number(l.cantidad), l.um, l.item, l.bodega];
+const COLS_PLANTILLA = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
 
 // ── Excel consolidado del bloque ──────────────────────────────────────────
-// Hoja 1 "Plantilla": mismas 9 columnas de siempre, con TODAS las líneas del bloque.
+// Hoja 1 "Plantilla": fecha y hora de radicación en la columna A + las columnas de siempre, con TODAS las líneas del bloque.
 // Hoja 2 "Solicitudes del bloque": qué solicitudes entraron y sus totales.
 // Hoja 3 "Detalle": cada línea con el número de su solicitud (trazabilidad).
 function generarExcelLote(lote, lineas) {
   const wb = XLSX.utils.book_new();
 
-  const ws1 = XLSX.utils.aoa_to_sheet([HEADERS_PLANTILLA, ...lineas.map(filaPlantilla)]);
+  const ws1 = XLSX.utils.aoa_to_sheet([HEADERS_PLANTILLA, ...lineas.map(l => filaPlantilla(l))]);
   ws1["!cols"] = COLS_PLANTILLA;
   XLSX.utils.book_append_sheet(wb, ws1, "Plantilla");
 
@@ -81,10 +83,10 @@ function generarExcelLote(lote, lineas) {
   XLSX.utils.book_append_sheet(wb, ws2, "Solicitudes del bloque");
 
   const ws3 = XLSX.utils.aoa_to_sheet([
-    ["N° solicitud", "Línea", ...HEADERS_PLANTILLA],
-    ...lineas.map(l => [l.solicitud_numero, l.linea_nro, ...filaPlantilla(l)]),
+    [HEADERS_PLANTILLA[0], "N° solicitud", "Línea", ...HEADERS_PLANTILLA.slice(1)],
+    ...lineas.map(l => { const [fecha, ...resto] = filaPlantilla(l); return [fecha, l.solicitud_numero, l.linea_nro, ...resto]; }),
   ]);
-  ws3["!cols"] = [{wch:18},{wch:7}, ...COLS_PLANTILLA];
+  ws3["!cols"] = [COLS_PLANTILLA[0], {wch:18}, {wch:7}, ...COLS_PLANTILLA.slice(1)];
   XLSX.utils.book_append_sheet(wb, ws3, "Detalle");
 
   XLSX.writeFile(wb, `despachos_bloque_${lote.numero}.xlsx`);
@@ -187,7 +189,7 @@ export default function Solicitudes({ isMobile }) {
     let lineas = detalle[sol.id]?.lineas;
     if (!lineas) { try { lineas = await obtenerLineas(sol.id); } catch (e) { aviso("⚠ " + e.message); return; } }
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([HEADERS_PLANTILLA, ...lineas.map(filaPlantilla)]);
+    const ws = XLSX.utils.aoa_to_sheet([HEADERS_PLANTILLA, ...lineas.map(l => filaPlantilla(l, sol.radicada_at))]);
     ws["!cols"] = COLS_PLANTILLA;
     XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
     XLSX.writeFile(wb, `despacho_${(sol.area_solicitante || "envio").replace(/\s+/g, "_")}_${sol.numero}.xlsx`);
