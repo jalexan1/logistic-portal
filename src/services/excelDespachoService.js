@@ -1,0 +1,136 @@
+// ── excelDespachoService.js ──────────────────────────────────────────────
+// Archivos que se descargan por cada solicitud (Toma de pedidos fase 3):
+//   1. despacho_<AREA>_<N°>.xlsx       → plantilla completa (FECHA Y HORA + 15 campos)
+//   2. CARGA A WMS_<AREA>_<N°>.xlsx    → lo que se sube al WMS (con EAN)
+//   3. CARGA LIBRO 1_<AREA>_<N°>.xlsx  → una fila por ENTREGA: SKU = cuántos
+//      artículos tiene la entrega, CANTIDAD = suma de unidades de la entrega.
+// Todas las pantallas (radicación manual, PDF, Solicitudes de hoy, Solicitudes
+// y bloques) usan este servicio: un solo formato, un solo lugar para cambiarlo.
+// ─────────────────────────────────────────────────────────────────────────
+import * as XLSX from "xlsx";
+import { fechaHoraBogota } from "../utils/fechas";
+
+// Columnas de la plantilla de despacho (orden pedido en DESPACHOS.xlsx,
+// hoja "QUE SE DEBE SOLICITAR A CLICK", con la fecha y hora en la columna A).
+export const COLUMNAS_DESPACHO = [
+  { titulo: "FECHA Y HORA",        campo: "fechaHora",    ancho: 17 },
+  { titulo: "AREA",                campo: "area",         ancho: 16 },
+  { titulo: "SOLICITANTE",         campo: "solicitante",  ancho: 24 },
+  { titulo: "CORREO ELECTRONICO",  campo: "correo",       ancho: 28 },
+  { titulo: "ENTREGA",             campo: "entrega",      ancho: 16 },
+  { titulo: "DESTINATARIO (NIT)",  campo: "nit",          ancho: 16 },
+  { titulo: "NOMBRE DESTINATARIO", campo: "nombre",       ancho: 32 },
+  { titulo: "DIRECCION",           campo: "direccion",    ancho: 28 },
+  { titulo: "CIUDAD",              campo: "ciudad",       ancho: 16 },
+  { titulo: "DEPARTAMENTO",        campo: "departamento", ancho: 16 },
+  { titulo: "SKU",                 campo: "sku",          ancho: 16 },
+  { titulo: "EAN",                 campo: "ean",          ancho: 16 },
+  { titulo: "CANTIDAD",            campo: "cantidad",     ancho: 10, numero: true },
+  { titulo: "UM",                  campo: "um",           ancho: 6 },
+  { titulo: "ITEM",                campo: "item",         ancho: 8 },
+  { titulo: "BODEGA",              campo: "bodega",       ancho: 8 },
+];
+
+const COLUMNAS_WMS = [
+  ["Entrega", "entrega", 16], ["Destinatario (NIT)", "nit", 16], ["Nombre destinatario", "nombre", 32],
+  ["Ciudad", "ciudad", 16], ["Ean", "ean", 16], ["Cantidad entrega", "cantidad", 14],
+  ["UM", "um", 6], ["item", "item", 8], ["bodega", "bodega", 8],
+];
+
+const COLUMNAS_LIBRO1 = [
+  ["ENTREGA", 16], ["SKU", 8], ["CANTIDAD", 10], ["Destinatario (NIT)", 16], ["Nombre destinatario", 32],
+  ["Direccion", 28], ["Telefono", 16], ["Ciudad", 16], ["Departamento", 16],
+];
+
+const texto = (v) => (v === null || v === undefined ? "" : String(v));
+const numero = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const itemValor = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : texto(v); };
+
+/**
+ * Línea en el formato del servicio. Acepta filas de la base
+ * (vw_solicitud_lineas / solicitud_lineas / vw_lote_lineas) o filas de pantalla.
+ * `enc` trae lo que no está en la línea: { numero, area, solicitante, correo, radicadaAt }.
+ */
+export function normalizarLinea(l, enc = {}) {
+  const radicadaAt = l.radicada_at || enc.radicadaAt;
+  return {
+    numero:       texto(l.numero || l.solicitud_numero || enc.numero),
+    fechaHora:    enc.fechaHora || (radicadaAt ? fechaHoraBogota(radicadaAt) : ""),
+    area:         texto(l.area_solicitante ?? enc.area),
+    solicitante:  texto(l.solicitante_nombre ?? enc.solicitante),
+    correo:       texto(l.solicitante_correo ?? enc.correo),
+    entrega:      texto(l.entrega),
+    nit:          texto(l.destinatario_nit ?? l.destinatario),
+    nombre:       texto(l.destinatario_nombre ?? l.nombre),
+    direccion:    texto(l.destinatario_direccion ?? l.direccion),
+    ciudad:       texto(l.destinatario_ciudad ?? l.lugar),
+    departamento: texto(l.destinatario_departamento ?? l.departamento),
+    telefono:     texto(l.destinatario_telefono ?? l.telefono),
+    sku:          texto(l.material),
+    ean:          texto(l.ean),
+    cantidad:     numero(l.cantidad),
+    um:           texto(l.um || "BUL"),
+    item:         itemValor(l.item),
+    bodega:       texto(l.bodega),
+  };
+}
+
+// ── Hojas ────────────────────────────────────────────────────────────────
+export function hojaDespacho(lineas, { conSolicitud = false } = {}) {
+  const cols = conSolicitud
+    ? [COLUMNAS_DESPACHO[0], { titulo: "N° SOLICITUD", campo: "numero", ancho: 18 }, ...COLUMNAS_DESPACHO.slice(1)]
+    : COLUMNAS_DESPACHO;
+  const ws = XLSX.utils.aoa_to_sheet([cols.map(c => c.titulo), ...lineas.map(l => cols.map(c => l[c.campo]))]);
+  ws["!cols"] = cols.map(c => ({ wch: c.ancho }));
+  return ws;
+}
+
+export function hojaWms(lineas) {
+  const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_WMS.map(c => c[0]), ...lineas.map(l => COLUMNAS_WMS.map(c => l[c[1]]))]);
+  ws["!cols"] = COLUMNAS_WMS.map(c => ({ wch: c[2] }));
+  return ws;
+}
+
+// Una fila por ENTREGA (+ destinatario): SKU = artículos distintos, CANTIDAD = suma
+export function filasLibro1(lineas) {
+  const grupos = new Map();
+  lineas.forEach(l => {
+    const k = `${l.entrega}¦${l.nit}`;
+    const g = grupos.get(k) || { ...l, skus: new Set(), total: 0 };
+    g.skus.add(l.sku); g.total += l.cantidad;
+    if (!g.direccion && l.direccion) g.direccion = l.direccion;
+    if (!g.telefono && l.telefono) g.telefono = l.telefono;
+    if (!g.departamento && l.departamento) g.departamento = l.departamento;
+    grupos.set(k, g);
+  });
+  return [...grupos.values()].map(g => [g.entrega, g.skus.size, g.total, g.nit, g.nombre, g.direccion, g.telefono, g.ciudad, g.departamento]);
+}
+
+export function hojaLibro1(lineas) {
+  const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_LIBRO1.map(c => c[0]), ...filasLibro1(lineas)]);
+  ws["!cols"] = COLUMNAS_LIBRO1.map(c => ({ wch: c[1] }));
+  return ws;
+}
+
+// ── Descarga de los 3 archivos de una solicitud ─────────────────────────
+const libro = (ws, nombreHoja) => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, nombreHoja); return wb; };
+const esperar = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Descarga despacho_, CARGA A WMS_ y CARGA LIBRO 1_ de una solicitud.
+ * `lineas` ya normalizadas (normalizarLinea). Se espacian las descargas para que
+ * el navegador no bloquee las siguientes. Devuelve los nombres descargados.
+ */
+export async function descargarArchivosDespacho({ area, numero, lineas }) {
+  const sufijo = `${(area || "envio").trim().replace(/\s+/g, "_")}_${numero}`;
+  const archivos = [
+    [`despacho_${sufijo}.xlsx`,      libro(hojaDespacho(lineas), "Plantilla")],
+    [`CARGA A WMS_${sufijo}.xlsx`,   libro(hojaWms(lineas), "CARGA A WMS")],
+    [`CARGA LIBRO 1_${sufijo}.xlsx`, libro(hojaLibro1(lineas), "CARGA LIBRO 1")],
+  ];
+  for (let i = 0; i < archivos.length; i++) {
+    if (i > 0) await esperar(400);
+    XLSX.writeFile(archivos[i][1], archivos[i][0]);
+  }
+  return archivos.map(a => a[0]);
+}

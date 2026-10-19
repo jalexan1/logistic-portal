@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { BD_CLIENTES, buscarPorNombre } from "../services/clientesService";
-import { radicarSolicitud, nuevaLlave } from "../services/solicitudesService";
+import { BD_CLIENTES, buscarPorNombre, buscarNombreExacto } from "../services/clientesService";
+import { radicarSolicitud, nuevaLlave, obtenerLineas } from "../services/solicitudesService";
+import { cargarItemsEan, eanDeSku } from "../services/maestrosService";
+import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
+import BuscadorMaestro from "./BuscadorMaestro";
 import { fechaHoraBogota } from "../utils/fechas";
 import { useAuth } from "./auth/authContext";
 import SolicitudesDelDia from "./SolicitudesDelDia";
@@ -35,6 +38,21 @@ const EMPTY_ROW = () => ({
   entrega:"", destinatario:"", nombre:"", lugar:"",
   material:"", cantidad:"", um:"BUL", item:"1001", bodega:"021",
 });
+
+// ── Descarga de los 3 archivos (despacho_, CARGA A WMS_, CARGA LIBRO 1_) ──
+// Se arman con las líneas GUARDADAS en la base (que ya trae EAN, dirección,
+// departamento y teléfono completados desde los maestros). Si la consulta
+// falla, se arman con lo que hay en pantalla para no dejar al usuario sin archivo.
+async function descargarDespacho({ id, numero, area, solicitante, correo, radicadaAt, filasLocales }) {
+  const enc = { numero, area, solicitante, correo, radicadaAt };
+  let lineas;
+  try {
+    const guardadas = id ? await obtenerLineas(id) : [];
+    lineas = guardadas.length ? guardadas.map(l => normalizarLinea(l, enc)) : null;
+  } catch { lineas = null; }
+  if (!lineas) lineas = filasLocales.map(r => normalizarLinea(r, enc));
+  return descargarArchivosDespacho({ area, numero, lineas });
+}
 
 // ── Popup de confirmación ──
 function SuccessPopup({ visible, meta, onClose, onNewRequest }) {
@@ -77,7 +95,7 @@ function SuccessPopup({ visible, meta, onClose, onNewRequest }) {
           ))}
         </div>
         <div style={{ padding:"16px 28px 22px", textAlign:"center" }}>
-          <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>El archivo .xlsx fue descargado en tu equipo</div>
+          <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>Se descargaron: despacho_, CARGA A WMS_ y CARGA LIBRO 1_</div>
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={onNewRequest} style={{ flex:1, height:44, borderRadius:10, background:"#F2F8F5", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:13, fontWeight:600, cursor:"pointer" }}
               onMouseEnter={e => e.currentTarget.style.background = "#E1F5EE"}
@@ -215,21 +233,31 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const [solicitudYaGenerada, setSolicitudYaGenerada] = useState(false);
   const [pedidoHeader, setPedidoHeader] = useState(null);
   const [enviandoPdf, setEnviandoPdf] = useState(false);
+  const [lupa, setLupa] = useState(null);            // { tipo: 'destinatario'|'item', idx, inicial }
+  const [noMaestro, setNoMaestro] = useState(null);  // destinatario del PDF que no está en el maestro
+  const valorAlEntrar = useRef("");                  // valor de la celda al entrar (para saber si cambió)
   const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
   const pdfInputRef = useRef(null);
   const isMobileLocal = typeof window !== "undefined" && window.innerWidth < 768;
-  const OUTPUT_HEADERS = ["Fecha y hora", "Entrega", "Destinat.", "Nombre destinatario de mercancías", "Lugar-destinatario", "Material", "Cantidad entrega", "UM", "item", "bodega"];
 
   const parsePdfText = (fullText) => {
     const lines = fullText.split("\n").map(l => l.trim()).filter(Boolean);
     const pedidoMatch = fullText.match(/#\s*([A-Za-z0-9]+)/);
     const numeroPedido = pedidoMatch ? pedidoMatch[1].trim() : "";
+    // ENTREGA = código del encabezado superior izquierdo del PDF (ej. "Clic0015587"),
+    // que va ANTES de la línea "# Click0015587". Si no aparece, se usa el N° de pedido.
+    const ENTREGA_RE = /^[A-Za-z]{2,10}\d{5,}$/;
+    const hashIdx = lines.findIndex(l => l.startsWith("#"));
+    const encabezado = lines.slice(0, hashIdx !== -1 ? hashIdx : Math.min(lines.length, 8));
+    const entregaPdf = encabezado.find(l => ENTREGA_RE.test(l)) || numeroPedido;
     const dirigidoIdx = lines.findIndex(l => /^dirigido a$/i.test(l));
     const nombreDestinatario = dirigidoIdx !== -1 && lines[dirigidoIdx + 1] ? lines[dirigidoIdx + 1].trim() : "";
     const bdMatch = buscarPorNombre(nombreDestinatario);
     const destinatarioNit    = bdMatch ? bdMatch[0] : "";
-    const destinatarioNombre = nombreDestinatario;
+    // Con coincidencia en el maestro se usa el nombre del maestro (NIT y nombre quedan alineados)
+    const destinatarioNombre = bdMatch ? bdMatch[1].nombre : nombreDestinatario;
     const destinatarioCiudad = bdMatch ? bdMatch[1].ciudad : "";
+    const maestro = bdMatch ? bdMatch[1] : {};
 
     const SKU_RE = /^[A-Z][A-Z0-9\-]*$|^[A-Z]{2,}$/;
     const BROKEN_SKU_RE = /^([A-Z][A-Z0-9]+)\s*-\s*$/;
@@ -282,9 +310,12 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         if (PRICE_RE.test(after[2]||"")) subtotalLinea = after[2];
         if (PRICE_RE.test(after[3]||"")) totalLinea = after[3];
       }
+      const itemEan = eanDeSku(sku);
       parsed.push({
-        entrega: numeroPedido, destinatario: destinatarioNit, nombre: destinatarioNombre, lugar: destinatarioCiudad,
-        material: sku, cantidad: cantidad || "", um: "BUL", item: "1001", bodega: "021",
+        entrega: entregaPdf, destinatario: destinatarioNit, nombre: destinatarioNombre,
+        direccion: maestro.direccion || "", lugar: destinatarioCiudad, departamento: maestro.departamento || "",
+        telefono: maestro.telefono || "",
+        material: sku, ean: itemEan ? itemEan.ean : "", cantidad: cantidad || "", um: "BUL", item: "1001", bodega: "021",
         producto, precio, descuentoPct, subtotalLinea, totalLinea,
       });
       i = brokenMatch ? i + 2 : i + 1;
@@ -324,8 +355,11 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     const descuentoFactura = findTotalVal("descuento");
     const totalFactura     = findTotalVal("total");
 
+    // Teléfono: el del maestro manda; si no hay, el que trae el PDF
+    if (clienteTelefono) parsed.forEach(r => { if (!r.telefono) r.telefono = clienteTelefono; });
+
     const pedidoHeader = {
-      numeroPedido, fechaCreacion, fechaVencimiento,
+      numeroPedido, entrega: entregaPdf, fechaCreacion, fechaVencimiento,
       clienteNombre: nombreDestinatario, clienteCorreo, clienteTelefono,
       generadoPorNombre, generadoPorCorreo,
       subtotalFactura, descuentoFactura, totalFactura,
@@ -336,8 +370,10 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
 
   const processPdf = async (file) => {
     if (!file || file.type !== "application/pdf") { setError("Solo se aceptan archivos PDF."); return; }
-    setLoading(true); setError(""); setPdfRows(""); setFileName(file.name);
+    setLoading(true); setError(""); setPdfRows([]); setFileName(file.name); setRowErrors({});
     try {
+      // Maestro Item/EAN para completar la columna EAN (si falla, el EAN se digita)
+      try { await cargarItemsEan(); } catch (e) { if (showToast) showToast("⚠ " + e.message + ". El EAN deberá digitarse."); }
       if (!window.pdfjsLib) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
@@ -360,8 +396,10 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       else {
         setPdfRows(filas);
         setPedidoHeader(header);
-        if (!bdMatch && nombreDestinatario) setError(`⚠ "${nombreDestinatario}" no se encontró en la BD de clientes. NIT y ciudad quedan en blanco — puedes editarlos.`);
-        else setError("");
+        if (!bdMatch) {
+          setNoMaestro({ nombre: nombreDestinatario || "(el PDF no trae el nombre del destinatario)" });
+          setError(`⚠ "${nombreDestinatario || "Destinatario"}" no está en el maestro de destinatarios. NIT, nombre y ciudad quedan resaltados en amarillo para digitarlos o buscarlos con la lupa 🔍.`);
+        } else setError("");
       }
     } catch (err) { setError("Error al procesar el PDF: " + err.message); }
     finally { setLoading(false); }
@@ -369,6 +407,60 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
 
   const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file) processPdf(file); };
   const updatePdfRow = (idx, key, val) => setPdfRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: val } : r));
+  const marcar = (idx, key, on) => setRowErrors(prev => { const n = { ...prev }; if (on) n[`${idx}-${key}`] = true; else delete n[`${idx}-${key}`]; return n; });
+
+  // Datos del destinatario: se aplican a todas las líneas de la MISMA entrega
+  // (un PDF = un destinatario), para que NIT y nombre no queden desalineados.
+  const aplicarDestinatario = (idx, datos, marcas = {}) => {
+    const entrega = pdfRows[idx]?.entrega;
+    const afectadas = pdfRows.map((r, i) => (i === idx || (entrega && r.entrega === entrega)) ? i : -1).filter(i => i >= 0);
+    setPdfRows(prev => prev.map((r, i) => afectadas.includes(i) ? { ...r, ...datos } : r));
+    setRowErrors(prev => {
+      const n = { ...prev };
+      afectadas.forEach(i => ["destinatario", "nombre"].forEach(k => {
+        if (marcas[k]) n[`${i}-${k}`] = true; else delete n[`${i}-${k}`];
+      }));
+      return n;
+    });
+  };
+  const datosMaestro = (nit, m) => ({
+    destinatario: nit, nombre: m.nombre, lugar: m.ciudad || "", direccion: m.direccion || "",
+    departamento: m.departamento || "", ...(m.telefono ? { telefono: m.telefono } : {}),
+  });
+
+  // Al salir de la celda NIT: si existe en el maestro trae nombre, ciudad, dirección…;
+  // si no existe, BORRA el nombre y lo sombrea en amarillo para corregir.
+  const confirmarNit = (idx, valor) => {
+    const nit = String(valor || "").trim();
+    if (nit === valorAlEntrar.current) return;
+    const m = nit ? BD_CLIENTES[nit] : null;
+    if (m) aplicarDestinatario(idx, datosMaestro(nit, m));
+    else {
+      aplicarDestinatario(idx, { destinatario: nit, nombre: "" }, { nombre: true, destinatario: !nit });
+      if (nit && showToast) showToast(`⚠ El NIT ${nit} no está en el maestro: se borró el nombre. Búsquelo con la lupa 🔍 o repórtelo al coordinador de L&S.`);
+    }
+  };
+  // Al salir de la celda Nombre: debe existir EXACTO en el maestro; si no, borra el NIT.
+  const confirmarNombre = (idx, valor) => {
+    const nombre = String(valor || "").trim();
+    if (nombre === valorAlEntrar.current) return;
+    const m = buscarNombreExacto(nombre);
+    if (m) aplicarDestinatario(idx, datosMaestro(m[0], m[1]));
+    else {
+      aplicarDestinatario(idx, { nombre, destinatario: "" }, { destinatario: true, nombre: !nombre });
+      if (nombre && showToast) showToast(`⚠ "${nombre}" no está en el maestro: se borró el NIT. Use la lupa 🔍 para elegir el destinatario.`);
+    }
+  };
+  // SKU: al cambiarlo se vuelve a buscar el EAN en el maestro Item/EAN
+  const confirmarSku = (idx, valor) => {
+    if (String(valor || "").trim() === valorAlEntrar.current) return;
+    const it = eanDeSku(valor);
+    updatePdfRow(idx, "ean", it ? it.ean : "");
+  };
+
+  // Campos obligatorios ("parametrizados"): si el PDF no los trae, se deben digitar
+  const OBLIGATORIOS = ["entrega", "destinatario", "nombre", "lugar", "material", "ean", "cantidad", "um", "item", "bodega"];
+  const faltaEn = (r, k) => OBLIGATORIOS.includes(k) && (k === "cantidad" ? !(parseFloat(r.cantidad) > 0) : !String(r[k] ?? "").trim());
 
   const exportPdfToExcel = async () => {
     if (pdfRows.length === 0 || enviandoPdf) return;
@@ -380,9 +472,10 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     if (!correoTrimmed || !correoTrimmed.includes("@")) metaErrs["pdf-correo"] = true;
     const rErrs = {};
     pdfRows.forEach((r, idx) => {
-      if (!String(r.destinatario || "").trim()) rErrs[`${idx}-destinatario`] = true;
-      if (!String(r.nombre || "").trim())       rErrs[`${idx}-nombre`] = true;
-      if (!String(r.lugar || "").trim())         rErrs[`${idx}-lugar`] = true;
+      OBLIGATORIOS.forEach(k => { if (faltaEn(r, k)) rErrs[`${idx}-${k}`] = true; });
+      // NIT y nombre deben estar alineados con el maestro
+      const m = BD_CLIENTES[String(r.destinatario || "").trim()];
+      if (m && String(m.nombre).trim().toUpperCase() !== String(r.nombre || "").trim().toUpperCase()) rErrs[`${idx}-nombre`] = true;
     });
     if (Object.keys(metaErrs).length > 0 || Object.keys(rErrs).length > 0) {
       setRowErrors(rErrs);
@@ -391,7 +484,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       if (metaErrs["pdf-solicitante"]) msgs.push("Solicitante");
       if (metaErrs["pdf-correo"]) msgs.push("Correo electrónico");
       const filasFaltantes = [...new Set(Object.keys(rErrs).map(k => `Fila ${parseInt(k)+1}`))];
-      if (filasFaltantes.length > 0) msgs.push(`${filasFaltantes.join(", ")}: NIT, Nombre o Ciudad vacíos`);
+      if (filasFaltantes.length > 0) msgs.push(`${filasFaltantes.join(", ")}: datos obligatorios vacíos o NIT/nombre no coinciden (celdas en amarillo)`);
       if (showToast) showToast("⚠ Completa: " + msgs.join(" · "));
       return;
     }
@@ -419,13 +512,9 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     if (onRadicada) onRadicada();   // refresca la tabla de solicitudes del día
     const baseName = `despacho_${(meta.area||"pdf").replace(/\s+/g,"_")}_${solicitudFinal}`;
 
-    // ── Archivo 1: Plantilla operativa (fecha y hora de radicación en la columna A + columnas de siempre) ──
-    const wb = XLSX.utils.book_new();
-    const dataRows = pdfRows.map(r => [fechaFinal, r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, r.item, r.bodega]);
-    const ws = XLSX.utils.aoa_to_sheet([OUTPUT_HEADERS, ...dataRows]);
-    ws["!cols"] = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
-    XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-    XLSX.writeFile(wb, `${baseName}.xlsx`);
+    // ── Archivos 1-3: despacho_, CARGA A WMS_ y CARGA LIBRO 1_ (con lo guardado en la base)
+    await descargarDespacho({ id: radicada.id, numero: solicitudFinal, area: meta.area, solicitante: meta.solicitante,
+      correo: meta.correo, radicadaAt: radicada.radicadaAt, filasLocales: pdfRows });
 
     // ── Archivo 2: TODA_LA_INFO — informativo, no se usa en ningún proceso ──
     const h = pedidoHeader || {};
@@ -445,26 +534,49 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       ["Total factura", h.totalFactura || ""],
       [],
       ["DETALLE DE PRODUCTOS"],
-      ["SKU", "Producto", "Cantidad", "Precio unitario", "% Descuento", "Sub Total", "Total", "NIT destinatario", "Nombre destinatario", "Ciudad", "Ítem", "Bodega"],
-      ...pdfRows.map(r => [r.material, r.producto||"", parseFloat(r.cantidad)||0, r.precio||"", r.descuentoPct||"", r.subtotalLinea||"", r.totalLinea||"", r.destinatario, r.nombre, r.lugar, r.item, r.bodega]),
+      ["SKU", "EAN", "Producto", "Cantidad", "Precio unitario", "% Descuento", "Sub Total", "Total", "Entrega", "NIT destinatario", "Nombre destinatario", "Dirección", "Ciudad", "Departamento", "Ítem", "Bodega"],
+      ...pdfRows.map(r => [r.material, r.ean||"", r.producto||"", parseFloat(r.cantidad)||0, r.precio||"", r.descuentoPct||"", r.subtotalLinea||"", r.totalLinea||"", r.entrega, r.destinatario, r.nombre, r.direccion||"", r.lugar, r.departamento||"", r.item, r.bodega]),
     ];
     const infoWs = XLSX.utils.aoa_to_sheet(infoAoa);
-    infoWs["!cols"] = [{wch:16},{wch:34},{wch:10},{wch:16},{wch:12},{wch:16},{wch:16},{wch:16},{wch:24},{wch:16},{wch:8},{wch:8}];
+    infoWs["!cols"] = [{wch:16},{wch:16},{wch:34},{wch:10},{wch:16},{wch:12},{wch:16},{wch:16},{wch:16},{wch:16},{wch:28},{wch:24},{wch:16},{wch:16},{wch:8},{wch:8}];
     XLSX.utils.book_append_sheet(infoWb, infoWs, "Toda la info");
-    // Pequeño delay para que el navegador no bloquee la segunda descarga automática
-    setTimeout(() => XLSX.writeFile(infoWb, `${baseName}_TODA_LA_INFO.xlsx`), 300);
+    // Pequeño delay para que el navegador no bloquee la descarga automática
+    setTimeout(() => XLSX.writeFile(infoWb, `${baseName}_TODA_LA_INFO.xlsx`), 400);
 
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
 
   const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); if (pdfInputRef.current) pdfInputRef.current.value = ""; };
 
+  // Columnas de la grilla (mismo orden de la plantilla). lupa: abre el buscador del maestro.
   const PREVIEW_COLS = [
-    { key:"entrega", label:"Entrega", w:"110px" }, { key:"destinatario", label:"NIT", w:"100px" },
-    { key:"nombre", label:"Nombre dest.", w:"180px" }, { key:"lugar", label:"Ciudad", w:"100px" },
-    { key:"material", label:"Material (SKU)", w:"110px" }, { key:"cantidad", label:"Cantidad", w:"80px", numeric:true },
-    { key:"um", label:"UM", w:"54px" }, { key:"item", label:"Ítem", w:"64px" }, { key:"bodega", label:"Bodega", w:"64px" },
+    { key:"entrega",      label:"Entrega",       w:"120px" },
+    { key:"destinatario", label:"NIT",           w:"118px", lupa:"destinatario" },
+    { key:"nombre",       label:"Nombre dest.",  w:"210px", lupa:"destinatario" },
+    { key:"direccion",    label:"Dirección",     w:"170px" },
+    { key:"lugar",        label:"Ciudad",        w:"110px" },
+    { key:"departamento", label:"Departamento",  w:"110px" },
+    { key:"material",     label:"SKU",           w:"128px", lupa:"item" },
+    { key:"ean",          label:"EAN",           w:"138px", lupa:"item" },
+    { key:"cantidad",     label:"Cantidad",      w:"78px", numeric:true },
+    { key:"um",           label:"UM",            w:"56px" },
+    { key:"item",         label:"Ítem",          w:"62px" },
+    { key:"bodega",       label:"Bodega",        w:"64px" },
   ];
+  const totalPendientes = pdfRows.reduce((a, r, i) => a + PREVIEW_COLS.filter(c => faltaEn(r, c.key) || rowErrors[`${i}-${c.key}`]).length, 0);
+
+  const elegirDeLupa = (fila) => {
+    if (!lupa) return;
+    if (lupa.tipo === "destinatario") {
+      const m = BD_CLIENTES[String(fila.nit).trim()] || fila;
+      aplicarDestinatario(lupa.idx, datosMaestro(String(fila.nit).trim(), { ...fila, ...m, nombre: m.nombre || fila.nombre }));
+    } else {
+      updatePdfRow(lupa.idx, "material", fila.item);
+      updatePdfRow(lupa.idx, "ean", fila.ean);
+      marcar(lupa.idx, "material", false); marcar(lupa.idx, "ean", false);
+    }
+  };
+
 
   return (
     <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #F59E0B", boxShadow:"0 0 0 3px rgba(245,158,11,0.12)", overflow:"hidden", marginTop:20 }}>
@@ -503,22 +615,50 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         {error && <div style={{ background: error.startsWith("⚠") ? "#FFFBEB" : "#FFF5F5", border: `1px solid ${error.startsWith("⚠") ? "#F6D860" : "#F5A0A0"}`, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color: error.startsWith("⚠") ? "#92600A" : "#C0392B", lineHeight:1.5 }}>{error}</div>}
         {pdfRows.length > 0 && (
           <>
+            {totalPendientes > 0 && (
+              <div style={{ display:"flex", alignItems:"center", gap:8, background:"#FFF7D6", border:"1px solid #F2C94C", borderRadius:10, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#7A5A00" }}>
+                <span style={{ width:14, height:14, borderRadius:4, background:"#FFE58A", border:"1px solid #E5B935", flexShrink:0 }} />
+                <span><b>{totalPendientes} dato{totalPendientes !== 1 ? "s" : ""} por digitar o corregir</b> (celdas en amarillo). Son obligatorios para radicar. Use la lupa 🔍 para buscar en los maestros.</span>
+              </div>
+            )}
             <div style={{ overflowX:"auto", marginBottom:14, borderRadius:8, border:"1px solid #E2EDE9" }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", minWidth:860, fontSize:12 }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1480, fontSize:12 }}>
                 <thead><tr style={{ background:"#F2F8F5" }}>
                   <th style={{ width:32, padding:"8px 6px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:"center", borderBottom:"1px solid #E2EDE9" }}>#</th>
-                  {PREVIEW_COLS.map(c => <th key={c.key} style={{ width:c.w, padding:"8px 8px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:c.numeric?"right":"left", borderBottom:"1px solid #E2EDE9", whiteSpace:"nowrap" }}>{c.label}</th>)}
+                  {PREVIEW_COLS.map(c => <th key={c.key} style={{ width:c.w, padding:"8px 8px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:c.numeric?"right":"left", borderBottom:"1px solid #E2EDE9", whiteSpace:"nowrap" }}>
+                    {c.label}{OBLIGATORIOS.includes(c.key) && <span style={{ color:"#C0392B" }}> *</span>}
+                  </th>)}
                 </tr></thead>
                 <tbody>{pdfRows.map((r, idx) => (
-                  <tr key={idx} style={{ borderBottom:"1px solid #F0F7F4" }} onMouseEnter={e => e.currentTarget.style.background="#FAFCFB"} onMouseLeave={e => e.currentTarget.style.background=""}>
+                  <tr key={idx} style={{ borderBottom:"1px solid #F0F7F4" }}>
                     <td style={{ textAlign:"center", fontSize:11, color:"#9CB8AE", padding:"3px 4px" }}>{idx+1}</td>
-                    {PREVIEW_COLS.map(c => { const hasErr = rowErrors[`${idx}-${c.key}`]; return (
+                    {PREVIEW_COLS.map(c => {
+                      const amarillo = faltaEn(r, c.key) || rowErrors[`${idx}-${c.key}`];
+                      const fondo = amarillo ? "#FFF3BF" : "transparent";
+                      const borde = amarillo ? "1px solid #E5B935" : "1px solid transparent";
+                      return (
                       <td key={c.key} style={{ padding:"3px" }}>
-                        <input type={c.numeric ? "number" : "text"} value={r[c.key]} onChange={e => { updatePdfRow(idx, c.key, e.target.value); if (hasErr) setRowErrors(prev => { const n={...prev}; delete n[`${idx}-${c.key}`]; return n; }); }}
-                          style={{ width:"100%", height:30, padding:"0 7px", fontSize:12, border: hasErr ? "1px solid #E74C3C" : "1px solid transparent", borderRadius:6, background: hasErr ? "#FFF5F5" : "transparent", color:"#1a2e27", outline:"none", textAlign:c.numeric?"right":"left", boxSizing:"border-box" }}
-                          onFocus={e => { e.target.style.background="#F2F8F5"; e.target.style.border="1px solid #0F6E56"; }}
-                          onBlur={e => { e.target.style.background = hasErr ? "#FFF5F5" : "transparent"; e.target.style.border = hasErr ? "1px solid #E74C3C" : "1px solid transparent"; }}
-                        />
+                        <div style={{ position:"relative" }}>
+                          <input type={c.numeric ? "number" : "text"} value={r[c.key] ?? ""} title={amarillo ? "Dato obligatorio: digítelo o búsquelo con la lupa" : ""}
+                            onChange={e => updatePdfRow(idx, c.key, c.key === "cantidad" ? e.target.value : e.target.value.toUpperCase())}
+                            style={{ width:"100%", height:30, padding: c.lupa ? "0 26px 0 7px" : "0 7px", fontSize:12, border: borde, borderRadius:6, background: fondo, color:"#1a2e27", outline:"none", textAlign:c.numeric?"right":"left", boxSizing:"border-box" }}
+                            onFocus={e => { valorAlEntrar.current = String(r[c.key] ?? "").trim(); e.target.style.background = amarillo ? "#FFF3BF" : "#F2F8F5"; e.target.style.border = "1px solid #0F6E56"; }}
+                            onBlur={e => {
+                              e.target.style.background = fondo; e.target.style.border = borde;
+                              if (c.key === "destinatario") confirmarNit(idx, e.target.value);
+                              else if (c.key === "nombre") confirmarNombre(idx, e.target.value);
+                              else if (c.key === "material") confirmarSku(idx, e.target.value);
+                              else if (rowErrors[`${idx}-${c.key}`] && String(e.target.value).trim()) marcar(idx, c.key, false);
+                            }}
+                          />
+                          {c.lupa && (
+                            <button type="button" title={c.lupa === "item" ? "Buscar en el maestro Item / EAN" : "Buscar en el maestro de destinatarios"}
+                              onClick={() => setLupa({ tipo: c.lupa, idx, inicial: c.lupa === "item"
+                                ? (c.key === "ean" ? { ean: r.ean } : { item: (r.material || "").replace(/\s+/g, "").replace(/-(19|20)\d{2}$/, "") })
+                                : (c.key === "destinatario" ? { nit: r.destinatario } : { nombre: r.nombre }) })}
+                              style={{ position:"absolute", right:3, top:4, width:22, height:22, border:"none", borderRadius:5, background:"transparent", cursor:"pointer", fontSize:12, lineHeight:"22px", padding:0 }}>🔍</button>
+                          )}
+                        </div>
                       </td>); })}
                   </tr>))}</tbody>
               </table>
@@ -533,6 +673,29 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
           </>
         )}
       </div>
+      {lupa && <BuscadorMaestro tipo={lupa.tipo} inicial={lupa.inicial} onElegir={elegirDeLupa} onCerrar={() => setLupa(null)} />}
+      {noMaestro && (
+        <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:460, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
+            <div style={{ background:"#FFFBEB", borderBottom:"1px solid #FCD9A0", padding:"16px 22px", display:"flex", gap:12, alignItems:"center" }}>
+              <div style={{ width:36, height:36, borderRadius:10, background:"#F59E0B", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:700, flexShrink:0 }}>!</div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#92400E" }}>Destinatario no registrado en el maestro</div>
+            </div>
+            <div style={{ padding:"16px 22px", fontSize:13, color:"#44574F", lineHeight:1.55 }}>
+              <div style={{ background:"#F7F9F8", border:"1px solid #E2EDE9", borderRadius:8, padding:"8px 12px", fontWeight:700, color:"#1a2e27", marginBottom:12 }}>{noMaestro.nombre}</div>
+              Este destinatario no existe en el maestro de destinatarios.
+              <ul style={{ margin:"8px 0 0", paddingLeft:18 }}>
+                <li>Solicite al <b>administrador del sistema</b> que actualice el maestro.</li>
+                <li>Reporte la novedad al <b>coordinador de L&amp;S</b> para ajustar el dato.</li>
+                <li>Mientras tanto, digite el NIT o búsquelo con la lupa 🔍 en las celdas en amarillo.</li>
+              </ul>
+            </div>
+            <div style={{ padding:"0 22px 18px", textAlign:"right" }}>
+              <button onClick={() => setNoMaestro(null)} style={{ height:40, padding:"0 26px", borderRadius:10, background:"#0F6E56", color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
       {pdfPopup && (
         <div style={{ position:"fixed", inset:0, zIndex:2000, background:"rgba(10,30,24,0.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:"16px", backdropFilter:"blur(3px)" }}>
           <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:440, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)", animation:"popIn 0.28s cubic-bezier(0.34,1.56,0.64,1)" }}>
@@ -553,7 +716,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
               ))}
             </div>
             <div style={{ padding:"16px 28px 22px", textAlign:"center" }}>
-              <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>El archivo .xlsx fue descargado en tu equipo</div>
+              <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>Se descargaron: despacho_, CARGA A WMS_ y CARGA LIBRO 1_</div>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={resetPdf} style={{ flex:1, height:44, borderRadius:10, background:"#F2F8F5", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:13, fontWeight:600, cursor:"pointer" }} onMouseEnter={e => e.currentTarget.style.background="#E1F5EE"} onMouseLeave={e => e.currentTarget.style.background="#F2F8F5"}>Nuevo PDF</button>
                 <button onClick={() => setPdfPopup(false)} style={{ flex:1, height:44, borderRadius:10, background:"#0F6E56", color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }} onMouseEnter={e => e.currentTarget.style.background="#085041"} onMouseLeave={e => e.currentTarget.style.background="#0F6E56"}>Cerrar</button>
@@ -718,7 +881,7 @@ export default function PortalDespachos({ isMobile }) {
       setEnviando(true);
       try {
         const r = await radicarSolicitud({ llave: llaveRef.current, meta, filas: syncedRows, origen: "MANUAL" });
-        metaFinal = { ...meta, solicitud: r.numero, fecha: fechaHoraBogota(r.radicadaAt), esReintento: r.esReintento };
+        metaFinal = { ...meta, id: r.id, radicadaAt: r.radicadaAt, solicitud: r.numero, fecha: fechaHoraBogota(r.radicadaAt), esReintento: r.esReintento };
         setRecarga(n => n + 1);
       } catch (ex) {
         showToast("⚠ " + ex.message);
@@ -730,14 +893,9 @@ export default function PortalDespachos({ isMobile }) {
     const solicitudFinal = metaFinal.solicitud;
     setMeta(metaFinal);
     setSolicitudFinalizada(true);
-    const wb = XLSX.utils.book_new();
-    const headers = ["Fecha y hora","Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
-    const dataRows = syncedRows.map(r => [metaFinal.fecha, r.entrega, r.destinatario, r.nombre, r.lugar, r.material, parseFloat(r.cantidad)||0, r.um, parseInt(r.item)||0, r.bodega]);
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-    ws["!cols"] = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
-    XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-    const fname = `despacho_${(meta.area||"envio").replace(/\s+/g,"_")}_${solicitudFinal}.xlsx`;
-    XLSX.writeFile(wb, fname);
+    // despacho_, CARGA A WMS_ y CARGA LIBRO 1_ (con lo guardado en la base: EAN, dirección…)
+    await descargarDespacho({ id: metaFinal.id, numero: solicitudFinal, area: metaFinal.area, solicitante: metaFinal.solicitante,
+      correo: metaFinal.correo, radicadaAt: metaFinal.radicadaAt, filasLocales: syncedRows });
     setPopup(true);
   }, [rows, meta, enviando, solicitudFinalizada]);
 

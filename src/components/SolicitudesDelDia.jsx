@@ -1,15 +1,17 @@
 // ── SolicitudesDelDia.jsx ────────────────────────────────────────────────
-// Tabla dentro de la pantalla Despachos con las solicitudes que se van
-// radicando. Por defecto muestra las de HOY; los filtros permiten consultar
-// un rango de fechas. Se recarga sola cada vez que se radica una solicitud
-// (prop `recarga`). La lectura respeta los permisos del usuario:
-//  · solicitante → ve las suyas   · operador / consulta / admin → ve todas
-// Para cambiar estados o ver el detalle completo está la pestaña Solicitudes.
+// Tabla dentro de la pantalla Despachos con lo que se va radicando.
+// Fase 3: UNA FILA POR LÍNEA con todos los campos de la plantilla de despacho
+// (AREA, SOLICITANTE, CORREO, ENTREGA, NIT, NOMBRE, DIRECCIÓN, CIUDAD,
+// DEPARTAMENTO, SKU, EAN, CANTIDAD, UM, ITEM, BODEGA), barra de desplazamiento
+// horizontal y filtros por columna (con comodín *).
+// Por defecto muestra HOY; Desde/Hasta consultan un rango. Se recarga sola
+// cada vez que se radica una solicitud (prop `recarga`).
+// Permisos: solicitante → sus líneas · operador / consulta / admin → todas.
 // ─────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
-import { listarSolicitudes, obtenerLineas } from "../services/solicitudesService";
-import { fechaHoraBogota, horaBogota, isoFechaBogota } from "../utils/fechas";
+import { listarLineasSolicitudes } from "../services/solicitudesService";
+import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
+import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
 
 const ESTADO_UI = {
   RADICADA:  { label: "Radicada",  color: "#2563EB", bg: "#EFF6FF" },
@@ -17,8 +19,46 @@ const ESTADO_UI = {
   ANULADA:   { label: "Anulada",   color: "#C0392B", bg: "#FFF0EE" },   // solo históricas
 };
 
+// Columnas visibles (key = campo de vw_solicitud_lineas o calculado)
+const COLUMNAS = [
+  { key: "fecha",                     titulo: "Fecha y hora",       w: 128 },
+  { key: "numero",                    titulo: "N° solicitud",       w: 132, fuerte: true },
+  { key: "estado",                    titulo: "Estado",             w: 104 },
+  { key: "area_solicitante",          titulo: "Área",               w: 110 },
+  { key: "solicitante_nombre",        titulo: "Solicitante",        w: 160 },
+  { key: "solicitante_correo",        titulo: "Correo electrónico", w: 190 },
+  { key: "entrega",                   titulo: "Entrega",            w: 120 },
+  { key: "destinatario_nit",          titulo: "Destinatario (NIT)", w: 118 },
+  { key: "destinatario_nombre",       titulo: "Nombre destinatario", w: 210 },
+  { key: "destinatario_direccion",    titulo: "Dirección",          w: 180 },
+  { key: "destinatario_ciudad",       titulo: "Ciudad",             w: 110 },
+  { key: "destinatario_departamento", titulo: "Departamento",       w: 110 },
+  { key: "material",                  titulo: "SKU",                w: 120 },
+  { key: "ean",                       titulo: "EAN",                w: 130 },
+  { key: "cantidad",                  titulo: "Cantidad",           w: 80, num: true },
+  { key: "um",                        titulo: "UM",                 w: 56 },
+  { key: "item",                      titulo: "Ítem",               w: 60 },
+  { key: "bodega",                    titulo: "Bodega",             w: 64 },
+  { key: "origen",                    titulo: "Origen",             w: 70 },
+];
+
 const hoy = () => isoFechaBogota(new Date());
 const num = (n) => Number(n || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 });
+const valorCelda = (f, key) =>
+  key === "fecha" ? fechaHoraBogota(f.radicada_at)
+  : key === "estado" ? (ESTADO_UI[f.estado_codigo]?.label || f.estado_nombre || f.estado_codigo)
+  : key === "origen" ? (f.origen === "PDF" ? "PDF" : "Manual")
+  : f[key] ?? "";
+
+// Filtro de columna: "texto" = contiene · * = cualquier texto en medio ("bell*group", "PTC*2025")
+const coincide = (valor, filtro) => {
+  const f = String(filtro || "").trim().toLowerCase();
+  if (!f) return true;
+  const v = String(valor ?? "").toLowerCase();
+  if (!f.includes("*")) return v.includes(f);
+  const re = new RegExp(f.split("*").map(p => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*"));
+  return re.test(v);
+};
 
 export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) {
   const [desde, setDesde] = useState(hoy);
@@ -27,14 +67,16 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [bajando, setBajando] = useState(null);
+  const [filtros, setFiltros] = useState({});
 
   const esHoy = desde === hoy() && hasta === hoy();
   const rangoInvalido = Boolean(desde && hasta && desde > hasta);
+  const hayFiltros = Object.values(filtros).some(v => String(v || "").trim());
 
   const cargar = useCallback(async () => {
     if (rangoInvalido) { setDatos([]); setError("La fecha «Desde» no puede ser posterior a «Hasta»."); return; }
     setCargando(true); setError("");
-    try { setDatos(await listarSolicitudes({ desde, hasta, limite: 500 })); }
+    try { setDatos(await listarLineasSolicitudes({ desde, hasta })); }
     catch (e) { setError(e.message); }
     finally { setCargando(false); }
   }, [desde, hasta, rangoInvalido]);
@@ -42,25 +84,24 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
   // Carga inicial, al cambiar el rango y cada vez que se radica una solicitud
   useEffect(() => { cargar(); }, [cargar, recarga]);
 
+  const filtradas = useMemo(
+    () => datos.filter(f => COLUMNAS.every(c => coincide(valorCelda(f, c.key), filtros[c.key]))),
+    [datos, filtros]);
+
   const totales = useMemo(() => ({
-    solicitudes: datos.length,
-    lineas: datos.reduce((s, d) => s + Number(d.total_lineas || 0), 0),
-    unidades: datos.reduce((s, d) => s + Number(d.total_unidades || 0), 0),
-  }), [datos]);
+    solicitudes: new Set(filtradas.map(f => f.solicitud_id)).size,
+    lineas: filtradas.length,
+    unidades: filtradas.reduce((s, f) => s + Number(f.cantidad || 0), 0),
+  }), [filtradas]);
 
   const verHoy = () => { setDesde(hoy()); setHasta(hoy()); };
 
-  const descargarExcel = async (sol) => {
-    setBajando(sol.id);
+  // Los 3 archivos de la solicitud (todas sus líneas, aunque haya filtros)
+  const descargar = async (f) => {
+    setBajando(f.solicitud_id);
     try {
-      const lineas = await obtenerLineas(sol.id);
-      const headers = ["Fecha y hora","Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
-      const rows = lineas.map(l => [fechaHoraBogota(sol.radicada_at), l.entrega, l.destinatario_nit, l.destinatario_nombre, l.destinatario_ciudad, l.material, Number(l.cantidad), l.um, l.item, l.bodega]);
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-      ws["!cols"] = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
-      XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-      XLSX.writeFile(wb, `despacho_${(sol.area_solicitante || "envio").replace(/\s+/g, "_")}_${sol.numero}.xlsx`);
+      const lineas = datos.filter(d => d.solicitud_id === f.solicitud_id).map(d => normalizarLinea(d));
+      await descargarArchivosDespacho({ area: f.area_solicitante, numero: f.numero, lineas });
     } catch (e) {
       if (showToast) showToast("⚠ " + e.message);
     } finally { setBajando(null); }
@@ -68,19 +109,21 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
 
   const inputFecha = { height: 34, padding: "0 8px", fontSize: 13, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#1a2e27", outline: "none" };
   const btn = { height: 34, padding: "0 12px", fontSize: 12, fontWeight: 600, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#0F6E56", cursor: "pointer", whiteSpace: "nowrap" };
-  const th = { padding: "8px 10px", fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "left", whiteSpace: "nowrap", borderBottom: "1px solid #E2EDE9", background: "#F7FCF9" };
-  const td = { padding: "8px 10px", fontSize: 12.5, color: "#1a2e27", borderBottom: "1px solid #F0F5F3", whiteSpace: "nowrap" };
+  const th = { padding: "8px 8px", fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap", background: "#F7FCF9" };
+  const td = { padding: "7px 8px", fontSize: 12, color: "#1a2e27", borderBottom: "1px solid #F0F5F3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+  const filtroInput = { width: "100%", height: 26, padding: "0 6px", fontSize: 11, border: "1px solid #D4E5DE", borderRadius: 6, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box" };
+  const anchoTabla = COLUMNAS.reduce((a, c) => a + c.w, 0) + 80;
 
   return (
     <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2EDE9", overflow: "hidden", marginTop: 16 }}>
-      {/* Encabezado + filtros */}
+      {/* Encabezado + rango de fechas */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "12px 16px", borderBottom: "1px solid #E2EDE9" }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#1a2e27" }}>
             {esHoy ? "Solicitudes de hoy" : "Solicitudes del rango"}
           </div>
           <div style={{ fontSize: 11, color: "#6B8F80" }}>
-            {cargando ? "Cargando…" : `${totales.solicitudes} solicitud${totales.solicitudes !== 1 ? "es" : ""} · ${num(totales.lineas)} línea${totales.lineas !== 1 ? "s" : ""} · ${num(totales.unidades)} unidades`}
+            {cargando ? "Cargando…" : `${num(totales.solicitudes)} solicitud${totales.solicitudes !== 1 ? "es" : ""} · ${num(totales.lineas)} línea${totales.lineas !== 1 ? "s" : ""} · ${num(totales.unidades)} unidades${hayFiltros ? " (filtrado)" : ""}`}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -94,59 +137,86 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
           </label>
           <button onClick={verHoy} disabled={esHoy} title="Volver a las solicitudes de hoy"
             style={{ ...btn, ...(esHoy ? { background: "#0F6E56", color: "#fff", borderColor: "#0F6E56", cursor: "default" } : {}) }}>Hoy</button>
+          {hayFiltros && <button onClick={() => setFiltros({})} style={{ ...btn, color: "#B45309", borderColor: "#FCD9A0" }}>Limpiar filtros</button>}
           <button onClick={cargar} disabled={cargando} title="Actualizar la tabla" style={{ ...btn, opacity: cargando ? 0.6 : 1 }}>↻ Actualizar</button>
         </div>
       </div>
 
       {error && <div style={{ padding: "10px 16px", fontSize: 12, color: "#C0392B", background: "#FFF5F5", borderBottom: "1px solid #F5C6C0" }}>⚠ {error}</div>}
 
-      {/* Tabla */}
+      {/* Tabla con barra horizontal: todos los campos de la plantilla */}
       {!error && datos.length === 0 && !cargando ? (
         <div style={{ padding: "22px 16px", textAlign: "center", fontSize: 12.5, color: "#9CB8AE" }}>
           {esHoy ? "Aún no hay solicitudes radicadas hoy." : "No hay solicitudes en el rango seleccionado."}
         </div>
       ) : (
-        <div style={{ overflowX: "auto", maxHeight: 360, overflowY: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: isMobile ? 720 : 0 }}>
+        <div style={{ overflowX: "scroll", overflowY: "auto", maxHeight: 440 }}>
+          <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: anchoTabla, minWidth: "100%" }}>
+            <colgroup>
+              {COLUMNAS.map(c => <col key={c.key} style={{ width: c.w }} />)}
+              <col style={{ width: 80 }} />
+            </colgroup>
             <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
               <tr>
-                <th style={th}>N° solicitud</th>
-                <th style={th}>{esHoy ? "Hora" : "Fecha y hora"}</th>
-                <th style={th}>Área</th>
-                <th style={th}>Solicitante</th>
-                <th style={th}>Origen</th>
-                <th style={{ ...th, textAlign: "right" }}>Líneas</th>
-                <th style={{ ...th, textAlign: "right" }}>Unidades</th>
-                <th style={th}>Estado</th>
+                {COLUMNAS.map(c => <th key={c.key} style={{ ...th, textAlign: c.num ? "right" : "left" }}>{c.titulo}</th>)}
                 <th style={{ ...th, textAlign: "center" }}>Excel</th>
+              </tr>
+              {/* Filtros por columna */}
+              <tr>
+                {COLUMNAS.map(c => (
+                  <th key={c.key} style={{ ...th, padding: "0 6px 6px", borderBottom: "1px solid #E2EDE9" }}>
+                    {c.key === "estado" ? (
+                      <select value={filtros.estado || ""} onChange={e => setFiltros(f => ({ ...f, estado: e.target.value }))} style={filtroInput}>
+                        <option value="">Todos</option>
+                        {Object.values(ESTADO_UI).map(v => <option key={v.label} value={v.label}>{v.label}</option>)}
+                      </select>
+                    ) : (
+                      <input value={filtros[c.key] || ""} placeholder="Filtrar…" title="Contiene el texto · use * como comodín"
+                        onChange={e => setFiltros(f => ({ ...f, [c.key]: e.target.value }))} style={filtroInput} />
+                    )}
+                  </th>
+                ))}
+                <th style={{ ...th, borderBottom: "1px solid #E2EDE9" }} />
               </tr>
             </thead>
             <tbody>
-              {datos.map(sol => {
-                const est = ESTADO_UI[sol.estado_codigo] || { label: sol.estado_nombre || sol.estado_codigo, color: "#6B8F80", bg: "#F2F8F5" };
+              {filtradas.length === 0 && (
+                <tr><td colSpan={COLUMNAS.length + 1} style={{ ...td, textAlign: "center", color: "#9CB8AE", padding: 18 }}>Ninguna línea cumple los filtros.</td></tr>
+              )}
+              {filtradas.map((f, i) => {
+                const est = ESTADO_UI[f.estado_codigo] || { label: f.estado_nombre || f.estado_codigo, color: "#6B8F80", bg: "#F2F8F5" };
+                const primeraDeSolicitud = i === 0 || filtradas[i - 1].solicitud_id !== f.solicitud_id;
                 return (
-                  <tr key={sol.id}>
-                    <td style={{ ...td, fontWeight: 700, color: "#0F6E56" }}>{sol.numero}</td>
-                    <td style={td}>{esHoy ? horaBogota(sol.radicada_at) : fechaHoraBogota(sol.radicada_at)}</td>
-                    <td style={td}>{sol.area_solicitante}</td>
-                    <td style={{ ...td, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }} title={sol.solicitante_correo || ""}>{sol.solicitante_nombre}</td>
-                    <td style={{ ...td, color: "#6B8F80" }}>{sol.origen === "PDF" ? `PDF${sol.numero_pedido_origen ? " · " + sol.numero_pedido_origen : ""}` : "Manual"}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{num(sol.total_lineas)}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{num(sol.total_unidades)}</td>
-                    <td style={td}>
-                      <span title={sol.motivo_anulacion || (sol.lote_numero ? `Bloque ${sol.lote_numero}` : "")} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "3px 10px", borderRadius: 20 }}>{est.label}</span>
-                    </td>
+                  <tr key={f.linea_id} style={{ background: primeraDeSolicitud ? "#fff" : "#FCFEFD" }}>
+                    {COLUMNAS.map(c => {
+                      const v = valorCelda(f, c.key);
+                      if (c.key === "estado") return (
+                        <td key={c.key} style={td}><span title={f.lote_numero ? `Bloque ${f.lote_numero}` : ""} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "2px 9px", borderRadius: 20 }}>{est.label}</span></td>
+                      );
+                      return (
+                        <td key={c.key} title={String(v)} style={{ ...td, textAlign: c.num ? "right" : "left", fontWeight: c.fuerte ? 700 : 400, color: c.fuerte ? "#0F6E56" : (v === "" ? "#C9D6D0" : "#1a2e27") }}>
+                          {c.num ? num(v) : (v === "" ? "—" : v)}
+                        </td>
+                      );
+                    })}
                     <td style={{ ...td, textAlign: "center" }}>
-                      <button onClick={() => descargarExcel(sol)} disabled={bajando === sol.id} title={`Descargar de nuevo el Excel de ${sol.numero}`}
-                        style={{ height: 28, padding: "0 10px", fontSize: 11, fontWeight: 600, border: "1px solid #D4E5DE", borderRadius: 7, background: "#fff", color: "#0F6E56", cursor: bajando === sol.id ? "wait" : "pointer" }}>
-                        {bajando === sol.id ? "…" : "⬇ .xlsx"}
-                      </button>
+                      {primeraDeSolicitud && (
+                        <button onClick={() => descargar(f)} disabled={bajando === f.solicitud_id} title={`Descargar despacho_, CARGA A WMS_ y CARGA LIBRO 1_ de ${f.numero}`}
+                          style={{ height: 26, padding: "0 8px", fontSize: 11, fontWeight: 600, border: "1px solid #D4E5DE", borderRadius: 7, background: "#fff", color: "#0F6E56", cursor: bajando === f.solicitud_id ? "wait" : "pointer" }}>
+                          {bajando === f.solicitud_id ? "…" : "⬇ .xlsx"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {!isMobile && datos.length > 0 && (
+        <div style={{ padding: "6px 16px", fontSize: 11, color: "#9CB8AE", borderTop: "1px solid #F0F5F3" }}>
+          Desplace la tabla a la derecha para ver todos los campos. Filtros: escriba parte del texto o use * como comodín (ej. <b>PTC*2025</b>).
         </div>
       )}
     </div>

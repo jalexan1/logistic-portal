@@ -22,6 +22,7 @@ import {
   procesarLote, listarLotes, obtenerLineasLote, revertirLote, nuevaLlave,
 } from "../services/solicitudesService";
 import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
+import { normalizarLinea, descargarArchivosDespacho, hojaDespacho, hojaWms, hojaLibro1 } from "../services/excelDespachoService";
 
 // Estados vigentes (los que se pueden filtrar y asignar)
 const ESTADO_UI = {
@@ -42,25 +43,22 @@ const hace = (dias) => { const d = new Date(); d.setDate(d.getDate() - dias); re
 const num = (n) => Number(n || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 });
 const plural = (n, uno, varios) => `${num(n)} ${Number(n) === 1 ? uno : varios}`;
 
-// La columna A es la fecha y hora de radicación de la solicitud (hora Colombia)
-const HEADERS_PLANTILLA = ["Fecha y hora","Entrega","Destinat.","Nombre destinatario de mercancías","Lugar-destinatario","Material","Cantidad entrega","UM","item","bodega"];
-// radicadaAt: se pasa cuando la línea no la trae (descarga de una sola solicitud)
-const filaPlantilla = (l, radicadaAt = l.radicada_at) => [radicadaAt ? fechaHoraBogota(radicadaAt) : "", l.entrega, l.destinatario_nit, l.destinatario_nombre, l.destinatario_ciudad, l.material, Number(l.cantidad), l.um, l.item, l.bodega];
-const COLS_PLANTILLA = [{wch:18},{wch:18},{wch:14},{wch:34},{wch:20},{wch:14},{wch:16},{wch:6},{wch:8},{wch:8}];
-
 // ── Excel consolidado del bloque ──────────────────────────────────────────
-// Hoja 1 "Plantilla": fecha y hora de radicación en la columna A + las columnas de siempre, con TODAS las líneas del bloque.
-// Hoja 2 "Solicitudes del bloque": qué solicitudes entraron y sus totales.
-// Hoja 3 "Detalle": cada línea con el número de su solicitud (trazabilidad).
-function generarExcelLote(lote, lineas) {
+// Mismo formato de las descargas por solicitud (excelDespachoService), con
+// TODAS las líneas del bloque:
+//   Hoja "Despacho"        → plantilla completa + N° de solicitud
+//   Hoja "CARGA A WMS"     → lo que se sube al WMS
+//   Hoja "CARGA LIBRO 1"   → una fila por entrega (artículos y unidades)
+//   Hoja "Solicitudes del bloque" → qué solicitudes entraron y sus totales
+function generarExcelLote(lote, lineasBase) {
+  const lineas = lineasBase.map(l => normalizarLinea(l));
   const wb = XLSX.utils.book_new();
-
-  const ws1 = XLSX.utils.aoa_to_sheet([HEADERS_PLANTILLA, ...lineas.map(l => filaPlantilla(l))]);
-  ws1["!cols"] = COLS_PLANTILLA;
-  XLSX.utils.book_append_sheet(wb, ws1, "Plantilla");
+  XLSX.utils.book_append_sheet(wb, hojaDespacho(lineas, { conSolicitud: true }), "Despacho");
+  XLSX.utils.book_append_sheet(wb, hojaWms(lineas), "CARGA A WMS");
+  XLSX.utils.book_append_sheet(wb, hojaLibro1(lineas), "CARGA LIBRO 1");
 
   const porSol = new Map();
-  lineas.forEach(l => {
+  lineasBase.forEach(l => {
     const s = porSol.get(l.solicitud_id) || { ...l, lineas: 0, unidades: 0 };
     s.lineas += 1; s.unidades += Number(l.cantidad);
     porSol.set(l.solicitud_id, s);
@@ -72,7 +70,7 @@ function generarExcelLote(lote, lineas) {
     ["Procesado por", lote.procesadoPor || ""],
     ["Comentario", lote.comentario || ""],
     ["Solicitudes", sols.length],
-    ["Líneas", lineas.length],
+    ["Líneas", lineasBase.length],
     ["Unidades", sols.reduce((a, s) => a + s.unidades, 0)],
     [],
     ["N° solicitud", "Radicada el", "Área", "Solicitante", "Origen", "Pedido origen", "Líneas", "Unidades"],
@@ -81,13 +79,6 @@ function generarExcelLote(lote, lineas) {
   ]);
   ws2["!cols"] = [{wch:18},{wch:18},{wch:20},{wch:28},{wch:10},{wch:16},{wch:9},{wch:11}];
   XLSX.utils.book_append_sheet(wb, ws2, "Solicitudes del bloque");
-
-  const ws3 = XLSX.utils.aoa_to_sheet([
-    [HEADERS_PLANTILLA[0], "N° solicitud", "Línea", ...HEADERS_PLANTILLA.slice(1)],
-    ...lineas.map(l => { const [fecha, ...resto] = filaPlantilla(l); return [fecha, l.solicitud_numero, l.linea_nro, ...resto]; }),
-  ]);
-  ws3["!cols"] = [COLS_PLANTILLA[0], {wch:18}, {wch:7}, ...COLS_PLANTILLA.slice(1)];
-  XLSX.utils.book_append_sheet(wb, ws3, "Detalle");
 
   XLSX.writeFile(wb, `despachos_bloque_${lote.numero}.xlsx`);
 }
@@ -185,14 +176,13 @@ export default function Solicitudes({ isMobile }) {
     }
   };
 
+  // Los 3 archivos de la solicitud: despacho_, CARGA A WMS_ y CARGA LIBRO 1_
   const descargarExcel = async (sol) => {
     let lineas = detalle[sol.id]?.lineas;
     if (!lineas) { try { lineas = await obtenerLineas(sol.id); } catch (e) { aviso("⚠ " + e.message); return; } }
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([HEADERS_PLANTILLA, ...lineas.map(l => filaPlantilla(l, sol.radicada_at))]);
-    ws["!cols"] = COLS_PLANTILLA;
-    XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-    XLSX.writeFile(wb, `despacho_${(sol.area_solicitante || "envio").replace(/\s+/g, "_")}_${sol.numero}.xlsx`);
+    const enc = { numero: sol.numero, area: sol.area_solicitante, solicitante: sol.solicitante_nombre,
+      correo: sol.solicitante_correo, radicadaAt: sol.radicada_at };
+    await descargarArchivosDespacho({ area: sol.area_solicitante, numero: sol.numero, lineas: lineas.map(l => normalizarLinea(l, enc)) });
   };
 
   // ── Selección ──
@@ -393,7 +383,7 @@ export default function Solicitudes({ isMobile }) {
                       </div>
                       {sol.motivo_anulacion && <div style={{ fontSize: 12, color: "#C0392B", marginBottom: 10 }}>Motivo de anulación: {sol.motivo_anulacion}</div>}
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button onClick={() => descargarExcel(sol)} style={btnSec}>⬇ Descargar Excel de esta solicitud</button>
+                        <button onClick={() => descargarExcel(sol)} style={btnSec}>⬇ Descargar los 3 Excel de esta solicitud</button>
                         {puedeOperar && esRadicada && (
                           <button onClick={() => abrirBloque([sol])} style={{ ...btnSec, background: "#0F6E56", color: "#fff", borderColor: "#0F6E56" }}>Procesar solo esta</button>
                         )}

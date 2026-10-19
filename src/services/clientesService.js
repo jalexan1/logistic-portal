@@ -3,7 +3,8 @@
 // este archivo y publicados en el JS (sin login). AHORA: se leen de
 // core.destinatarios, protegido por login y RLS, al iniciar sesión.
 //
-// Se conserva la misma interfaz (BD_CLIENTES como objeto nit → {nombre, ciudad},
+// Se conserva la misma interfaz (BD_CLIENTES como objeto nit → {nombre, ciudad,
+// direccion, departamento, telefono},
 // buscarPorNit, buscarPorNombre) para no reescribir PortalDespachos.jsx.
 // ─────────────────────────────────────────────────────────────────────────
 import { core } from "../lib/supabase";
@@ -17,10 +18,10 @@ export async function cargarDestinatarios({ forzar = false } = {}) {
   const nuevos = {};
   for (let desde = 0; ; desde += PAGINA) {
     const { data, error } = await core().from("destinatarios")
-      .select("nit,nombre,ciudad").eq("activo", true)
+      .select("nit,nombre,ciudad,direccion,departamento,telefono").eq("activo", true)
       .order("nit").range(desde, desde + PAGINA - 1);
     if (error) throw new Error("No se pudo cargar el maestro de destinatarios: " + error.message);
-    data.forEach(d => { nuevos[String(d.nit).trim()] = { nombre: d.nombre, ciudad: d.ciudad || "" }; });
+    data.forEach(d => { nuevos[String(d.nit).trim()] = { nombre: d.nombre, ciudad: d.ciudad || "", direccion: d.direccion || "", departamento: d.departamento || "", telefono: d.telefono || "" }; });
     if (data.length < PAGINA) break;
   }
   Object.keys(BD_CLIENTES).forEach(k => delete BD_CLIENTES[k]);
@@ -31,10 +32,22 @@ export async function cargarDestinatarios({ forzar = false } = {}) {
 
 export const buscarPorNit = (nit) => BD_CLIENTES[String(nit).trim()] || null;
 
+const normNombre = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+// Coincidencia EXACTA del nombre (sin importar mayúsculas ni espacios dobles) → [nit, datos] | null
+export const buscarNombreExacto = (nombreBuscar) => {
+  const q = normNombre(nombreBuscar);
+  if (!q) return null;
+  return Object.entries(BD_CLIENTES).find(([, v]) => normNombre(v.nombre) === q) || null;
+};
+
+// Primero exacto; si no, el primer nombre que CONTIENE el texto (lectura del PDF)
 export const buscarPorNombre = (nombreBuscar) => {
   if (!nombreBuscar) return null;
-  const q = nombreBuscar.trim().toLowerCase();
-  return Object.entries(BD_CLIENTES).find(([, v]) => v.nombre.toLowerCase().includes(q)) || null;
+  const exacto = buscarNombreExacto(nombreBuscar);
+  if (exacto) return exacto;
+  const q = normNombre(nombreBuscar);
+  return Object.entries(BD_CLIENTES).find(([, v]) => normNombre(v.nombre).includes(q)) || null;
 };
 
 export { BD_CLIENTES };

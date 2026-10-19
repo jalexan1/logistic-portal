@@ -32,6 +32,9 @@ const aLinea = (r) => ({
   producto: r.producto || null,
   precio: aNumero(r.precio), descuento_pct: aNumero(r.descuentoPct),
   subtotal: aNumero(r.subtotalLinea), total: aNumero(r.totalLinea),
+  // Fase 3: si llegan vacíos, la base los completa con los maestros
+  ean: r.ean || null, direccion: r.direccion || null,
+  departamento: r.departamento || null, telefono: r.telefono || null,
 });
 
 /**
@@ -77,10 +80,30 @@ export async function listarSolicitudes({ desde, hasta, estado, texto, limite = 
 
 export async function obtenerLineas(solicitudId) {
   const { data, error } = await despachos().from("solicitud_lineas")
-    .select("linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega")
+    .select("linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,producto_descripcion,cantidad,um,item,bodega")
     .eq("solicitud_id", solicitudId).order("linea_nro");
   if (error) throw new Error(mensajeError(error));
   return data;
+}
+
+// Una fila por línea con todos los campos de la plantilla (tabla "Solicitudes de hoy").
+// Paginado de a 1000 (límite del API); máximo `tope` líneas.
+export async function listarLineasSolicitudes({ desde, hasta, tope = 5000 } = {}) {
+  const PAGINA = 1000;
+  const todas = [];
+  for (let ini = 0; ini < tope; ini += PAGINA) {
+    let q = despachos().from("vw_solicitud_lineas")
+      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega")
+      .order("radicada_at", { ascending: false }).order("solicitud_id", { ascending: false }).order("linea_nro")
+      .range(ini, ini + PAGINA - 1);
+    if (desde) q = q.gte("fecha_radicacion", desde);
+    if (hasta) q = q.lte("fecha_radicacion", hasta);
+    const { data, error } = await q;
+    if (error) throw new Error(mensajeError(error));
+    todas.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return todas;
 }
 
 export async function obtenerEventos(solicitudId) {
@@ -128,7 +151,7 @@ export async function obtenerLineasLote(loteId) {
   const todas = [];
   for (let desde = 0; ; desde += PAGINA) {
     const { data, error } = await despachos().from("vw_lote_lineas")
-      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega")
+      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega,solicitante_correo,ean,destinatario_direccion,destinatario_departamento,destinatario_telefono")
       .eq("lote_id", loteId)
       .order("solicitud_numero").order("linea_nro").order("linea_id")
       .range(desde, desde + PAGINA - 1);
