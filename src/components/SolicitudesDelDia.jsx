@@ -11,54 +11,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { listarLineasSolicitudes } from "../services/solicitudesService";
 import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
-import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
+import { isoFechaBogota } from "../utils/fechas";
+import { COLUMNAS_LINEAS, ESTADO_UI, uiEstado, valorCelda, filtrarLineas } from "../utils/tablaLineas";
 
-const ESTADO_UI = {
-  RADICADA:  { label: "Radicada",  color: "#2563EB", bg: "#EFF6FF" },
-  PROCESADA: { label: "Procesada", color: "#0F6E56", bg: "#E1F5EE" },
-  ANULADA:   { label: "Anulada",   color: "#C0392B", bg: "#FFF0EE" },   // solo históricas
-};
-
-// Columnas visibles (key = campo de vw_solicitud_lineas o calculado)
-const COLUMNAS = [
-  { key: "fecha",                     titulo: "Fecha y hora",       w: 128 },
-  { key: "numero",                    titulo: "N° solicitud",       w: 132, fuerte: true },
-  { key: "estado",                    titulo: "Estado",             w: 104 },
-  { key: "area_solicitante",          titulo: "Área",               w: 110 },
-  { key: "solicitante_nombre",        titulo: "Solicitante",        w: 160 },
-  { key: "solicitante_correo",        titulo: "Correo electrónico", w: 190 },
-  { key: "entrega",                   titulo: "Entrega",            w: 120 },
-  { key: "destinatario_nit",          titulo: "Destinatario (NIT)", w: 118 },
-  { key: "destinatario_nombre",       titulo: "Nombre destinatario", w: 210 },
-  { key: "destinatario_direccion",    titulo: "Dirección",          w: 180 },
-  { key: "destinatario_ciudad",       titulo: "Ciudad",             w: 110 },
-  { key: "destinatario_departamento", titulo: "Departamento",       w: 110 },
-  { key: "material",                  titulo: "SKU",                w: 120 },
-  { key: "ean",                       titulo: "EAN",                w: 130 },
-  { key: "cantidad",                  titulo: "Cantidad",           w: 80, num: true },
-  { key: "um",                        titulo: "UM",                 w: 56 },
-  { key: "item",                      titulo: "Ítem",               w: 60 },
-  { key: "bodega",                    titulo: "Bodega",             w: 64 },
-  { key: "origen",                    titulo: "Origen",             w: 70 },
-];
-
+const COLUMNAS = COLUMNAS_LINEAS;
 const hoy = () => isoFechaBogota(new Date());
 const num = (n) => Number(n || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 });
-const valorCelda = (f, key) =>
-  key === "fecha" ? fechaHoraBogota(f.radicada_at)
-  : key === "estado" ? (ESTADO_UI[f.estado_codigo]?.label || f.estado_nombre || f.estado_codigo)
-  : key === "origen" ? (f.origen === "PDF" ? "PDF" : "Manual")
-  : f[key] ?? "";
-
-// Filtro de columna: "texto" = contiene · * = cualquier texto en medio ("bell*group", "PTC*2025")
-const coincide = (valor, filtro) => {
-  const f = String(filtro || "").trim().toLowerCase();
-  if (!f) return true;
-  const v = String(valor ?? "").toLowerCase();
-  if (!f.includes("*")) return v.includes(f);
-  const re = new RegExp(f.split("*").map(p => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*"));
-  return re.test(v);
-};
 
 export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) {
   const [desde, setDesde] = useState(hoy);
@@ -84,9 +42,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
   // Carga inicial, al cambiar el rango y cada vez que se radica una solicitud
   useEffect(() => { cargar(); }, [cargar, recarga]);
 
-  const filtradas = useMemo(
-    () => datos.filter(f => COLUMNAS.every(c => coincide(valorCelda(f, c.key), filtros[c.key]))),
-    [datos, filtros]);
+  const filtradas = useMemo(() => filtrarLineas(datos, filtros), [datos, filtros]);
 
   const totales = useMemo(() => ({
     solicitudes: new Set(filtradas.map(f => f.solicitud_id)).size,
@@ -184,7 +140,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                 <tr><td colSpan={COLUMNAS.length + 1} style={{ ...td, textAlign: "center", color: "#9CB8AE", padding: 18 }}>Ninguna línea cumple los filtros.</td></tr>
               )}
               {filtradas.map((f, i) => {
-                const est = ESTADO_UI[f.estado_codigo] || { label: f.estado_nombre || f.estado_codigo, color: "#6B8F80", bg: "#F2F8F5" };
+                const est = uiEstado(f.estado_codigo, f.estado_nombre);
                 const primeraDeSolicitud = i === 0 || filtradas[i - 1].solicitud_id !== f.solicitud_id;
                 return (
                   <tr key={f.linea_id} style={{ background: primeraDeSolicitud ? "#fff" : "#FCFEFD" }}>

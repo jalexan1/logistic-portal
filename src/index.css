@@ -29,10 +29,24 @@ input, button, select, textarea {
 /* Tap highlight */
 button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
-/* Scrollbars */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #C5DDD4; border-radius: 3px; }
+/* Barras de desplazamiento (fase 4): más gruesas y con color visible para
+   poder agarrarlas con el mouse en todas las tablas.
+   Chrome / Edge / Safari → ::-webkit-scrollbar · Firefox → scrollbar-color */
+::-webkit-scrollbar { width: 14px; height: 14px; }
+::-webkit-scrollbar-track { background: #E6EFEB; border-radius: 8px; }
+::-webkit-scrollbar-thumb {
+  background: #5E9C86;
+  border-radius: 8px;
+  border: 3px solid #E6EFEB;         /* margen claro alrededor: se ve "flotando" */
+  min-height: 40px; min-width: 40px;
+}
+::-webkit-scrollbar-thumb:hover  { background: #0F6E56; }
+::-webkit-scrollbar-thumb:active { background: #085041; }
+::-webkit-scrollbar-corner { background: #E6EFEB; }
+/* Solo Firefox (en Chrome, scrollbar-color anularía el estilo de arriba) */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: auto; scrollbar-color: #5E9C86 #E6EFEB; }
+}
 
 /* Safe area for notched phones */
 @supports (padding: max(0px)) {

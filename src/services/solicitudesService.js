@@ -86,9 +86,10 @@ export async function obtenerLineas(solicitudId) {
   return data;
 }
 
-// Una fila por línea con todos los campos de la plantilla (tabla "Solicitudes de hoy").
+// Una fila por línea con todos los campos de la plantilla
+// (tablas "Solicitudes de hoy" y "Solicitudes radicadas").
 // Paginado de a 1000 (límite del API); máximo `tope` líneas.
-export async function listarLineasSolicitudes({ desde, hasta, tope = 5000 } = {}) {
+export async function listarLineasSolicitudes({ desde, hasta, estado, tope = 5000 } = {}) {
   const PAGINA = 1000;
   const todas = [];
   for (let ini = 0; ini < tope; ini += PAGINA) {
@@ -98,6 +99,7 @@ export async function listarLineasSolicitudes({ desde, hasta, tope = 5000 } = {}
       .range(ini, ini + PAGINA - 1);
     if (desde) q = q.gte("fecha_radicacion", desde);
     if (hasta) q = q.lte("fecha_radicacion", hasta);
+    if (estado) q = q.eq("estado_codigo", estado);
     const { data, error } = await q;
     if (error) throw new Error(mensajeError(error));
     todas.push(...data);

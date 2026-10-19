@@ -2,6 +2,8 @@
 // Consultas a los maestros para las lupas (popups de búsqueda) y el EAN.
 //  · core.destinatarios → NIT, nombre, dirección, ciudad, departamento, teléfono
 //  · core.item_ean      → Item (SKU base), EAN, descripción
+//  · core.ciudades      → ciudad → departamento (fase 4: completa el
+//                          departamento cuando el maestro de clientes no lo trae)
 // Búsqueda con comodines: "*" o "%" = cualquier texto en medio
 // ("bell*group" encuentra "BELLPROF GROUP S.A.S"). Siempre busca en cualquier
 // parte del campo y no distingue mayúsculas.
@@ -66,4 +68,34 @@ export async function buscarDestinatarios({ nit, nombre, ciudad } = {}, limite =
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
+}
+
+// ── Ciudad → departamento (core.ciudades) ────────────────────────────────
+// Misma normalización que core.fn_normalizar_texto en la base:
+// minúsculas, sin tildes y sin signos ("BOGOTÁ, D.C." → "bogota d c").
+export const normalizarTexto = (v) =>
+  String(v || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ").trim();
+
+let CIUDADES = null;       // ciudad normalizada → departamento
+let ciudadesEn = 0;
+
+export async function cargarCiudades({ forzar = false } = {}) {
+  if (!forzar && CIUDADES && Date.now() - ciudadesEn < 10 * 60000) return CIUDADES;
+  const nuevas = new Map();
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await core().from("ciudades")
+      .select("ciudad,departamento").eq("activo", true).order("ciudad").range(desde, desde + 999);
+    if (error) throw new Error("No se pudo cargar el maestro de ciudades: " + error.message);
+    data.forEach(r => nuevas.set(normalizarTexto(r.ciudad), r.departamento));
+    if (data.length < 1000) break;
+  }
+  CIUDADES = nuevas; ciudadesEn = Date.now();
+  return CIUDADES;
+}
+
+/** Departamento de una ciudad ("" si no se conoce o el maestro no ha cargado). */
+export function departamentoDeCiudad(ciudad) {
+  if (!CIUDADES || !ciudad) return "";
+  return CIUDADES.get(normalizarTexto(ciudad)) || "";
 }

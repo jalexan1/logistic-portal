@@ -1,5 +1,9 @@
 // ── Solicitudes.jsx ──────────────────────────────────────────────────────
 // Bandeja de solicitudes radicadas.
+// Fase 4: UNA FILA POR LÍNEA con todos los campos de "Excel desde PDF"
+// (fecha, área, solicitante, correo, entrega, NIT, nombre, dirección, ciudad,
+// departamento, teléfono, SKU, EAN, cantidad, UM, ítem, bodega…), filtros por
+// columna (con comodín *) y paginación 5/10/15/30/50/80/150 (arranca en 10).
 //  · solicitante → ve las suyas ("Mis solicitudes")
 //  · operador / consulta / admin → ve todas las de su cuenta
 //
@@ -12,15 +16,17 @@
 //   4. Con ese número se genera UN solo Excel con las líneas de todo el bloque.
 //   El bloque queda en "Bloques procesados" para volver a descargar su Excel;
 //   un administrador puede revertirlo (las solicitudes vuelven a Radicada).
-// Lectura desde despachos.vw_solicitudes (RLS aplica según el rol).
+// Lectura desde despachos.vw_solicitud_lineas (RLS aplica según el rol).
 // ─────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useAuth } from "./auth/authContext";
 import {
-  listarSolicitudes, obtenerLineas, obtenerEventos,
+  listarLineasSolicitudes, obtenerEventos,
   procesarLote, listarLotes, obtenerLineasLote, revertirLote, nuevaLlave,
 } from "../services/solicitudesService";
+import { COLUMNAS_LINEAS, filtrarLineas, valorCelda } from "../utils/tablaLineas";
+import Paginador from "./Paginador";
 import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
 import { normalizarLinea, descargarArchivosDespacho, hojaDespacho, hojaWms, hojaLibro1 } from "../services/excelDespachoService";
 
@@ -115,15 +121,20 @@ export default function Solicitudes({ isMobile }) {
   const veBloques = !esSolicitante;
 
   // Quien procesa abre la bandeja en "Radicada": lo pendiente por procesar
-  const [filtros, setFiltros] = useState({ desde: hace(30), hasta: isoFechaBogota(new Date()), estado: puedeOperar ? "RADICADA" : "", texto: "" });
-  const [datos, setDatos]     = useState([]);
+  const [filtros, setFiltros] = useState({ desde: hace(30), hasta: isoFechaBogota(new Date()), estado: puedeOperar ? "RADICADA" : "" });
+  const [datos, setDatos]     = useState([]);       // UNA FILA POR LÍNEA (vw_solicitud_lineas)
   const [cargando, setCargando] = useState(false);
   const [error, setError]     = useState("");
-  const [abierta, setAbierta] = useState(null);     // id expandida
-  const [detalle, setDetalle] = useState({});       // id → { lineas, eventos }
   const [toast, setToast]     = useState("");
+  const [bajando, setBajando] = useState(null);     // solicitud_id descargando
+  const [historial, setHistorial] = useState(null); // { sol, eventos | null }
 
-  // Selección para el bloque
+  // Filtros por columna + paginación (5, 10, 15, 30, 50, 80, 150 · arranca en 10)
+  const [filtrosCol, setFiltrosCol] = useState({});
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(10);
+
+  // Selección para el bloque (ids de solicitud)
   const [sel, setSel] = useState(() => new Set());
   // Ventana del bloque: { fase: 'confirmar' | 'procesando' | 'listo', items, lote?, lineas?, avisoExcel? }
   const [bloque, setBloque] = useState(null);
@@ -134,25 +145,27 @@ export default function Solicitudes({ isMobile }) {
   const [verLotes, setVerLotes] = useState(false);
   const [lotes, setLotes]       = useState([]);
   const [cargandoLotes, setCargandoLotes] = useState(false);
-  const [bajando, setBajando]   = useState(null);
+  const [bajandoLote, setBajandoLote] = useState(null);
   const [reversion, setReversion] = useState(null); // lote a revertir
   const [motivo, setMotivo]     = useState("");
   const [revirtiendo, setRevirtiendo] = useState(false);
 
   const aviso = (m) => { setToast(m); setTimeout(() => setToast(""), 4000); };
+  const rangoInvalido = Boolean(filtros.desde && filtros.hasta && filtros.desde > filtros.hasta);
 
   const cargar = useCallback(async () => {
+    if (rangoInvalido) { setDatos([]); setError("La fecha «Desde» no puede ser posterior a «Hasta»."); return; }
     setCargando(true); setError("");
     try {
-      const filas = await listarSolicitudes({ ...filtros, limite: 500 });
-      setDatos(filas);
+      const filas = await listarLineasSolicitudes({ desde: filtros.desde, hasta: filtros.hasta, estado: filtros.estado });
+      setDatos(filas); setPagina(1);
       // La selección solo conserva lo que sigue visible y Radicado
-      const vigentes = new Set(filas.filter(f => f.estado_codigo === "RADICADA").map(f => f.id));
+      const vigentes = new Set(filas.filter(f => f.estado_codigo === "RADICADA").map(f => f.solicitud_id));
       setSel(prev => new Set([...prev].filter(id => vigentes.has(id))));
     }
     catch (e) { setError(e.message); }
     finally { setCargando(false); }
-  }, [filtros]);
+  }, [filtros, rangoInvalido]);
 
   const cargarLotes = useCallback(async () => {
     if (!veBloques) return;
@@ -165,37 +178,77 @@ export default function Solicitudes({ isMobile }) {
   useEffect(() => { cargar(); }, [cargar]);
   useEffect(() => { if (verLotes) cargarLotes(); }, [verLotes, cargarLotes]);
 
-  const abrir = async (sol) => {
-    if (abierta === sol.id) { setAbierta(null); return; }
-    setAbierta(sol.id);
-    if (!detalle[sol.id]) {
-      try {
-        const [lineas, eventos] = await Promise.all([obtenerLineas(sol.id), obtenerEventos(sol.id)]);
-        setDetalle(p => ({ ...p, [sol.id]: { lineas, eventos } }));
-      } catch (e) { aviso("⚠ " + e.message); }
-    }
+  // ── Solicitudes (encabezados) armadas desde las líneas ──
+  const solicitudes = useMemo(() => {
+    const m = new Map();
+    datos.forEach(l => {
+      const s = m.get(l.solicitud_id) || {
+        id: l.solicitud_id, numero: l.numero, estado_codigo: l.estado_codigo, estado_nombre: l.estado_nombre,
+        area_solicitante: l.area_solicitante, solicitante_nombre: l.solicitante_nombre, solicitante_correo: l.solicitante_correo,
+        radicada_at: l.radicada_at, origen: l.origen, lote_numero: l.lote_numero, total_lineas: 0, total_unidades: 0,
+      };
+      s.total_lineas += 1; s.total_unidades += Number(l.cantidad || 0);
+      m.set(l.solicitud_id, s);
+    });
+    return m;
+  }, [datos]);
+
+  // ── Filtros por columna y página visible ──
+  const filtradas = useMemo(() => filtrarLineas(datos, filtrosCol), [datos, filtrosCol]);
+  const hayFiltrosCol = Object.values(filtrosCol).some(v => String(v || "").trim());
+  // Al cambiar filtros, filas por página o datos se vuelve a la página 1
+  const filtrarCol = (key, valor) => { setFiltrosCol(f => ({ ...f, [key]: valor })); setPagina(1); };
+  const cambiarPorPagina = (n) => { setPorPagina(n); setPagina(1); };
+  const paginas = Math.max(1, Math.ceil(filtradas.length / porPagina));
+  const paginaActual = Math.min(pagina, paginas);
+  const visibles = useMemo(
+    () => filtradas.slice((paginaActual - 1) * porPagina, paginaActual * porPagina),
+    [filtradas, paginaActual, porPagina]);
+
+  const resumen = useMemo(() => ({
+    solicitudes: new Set(filtradas.map(f => f.solicitud_id)).size,
+    lineas: filtradas.length,
+    unidades: filtradas.reduce((a, f) => a + Number(f.cantidad || 0), 0),
+  }), [filtradas]);
+
+  // Los 3 archivos de la solicitud (todas sus líneas, aunque haya filtros)
+  const descargarExcel = async (solicitudId) => {
+    const sol = solicitudes.get(solicitudId);
+    if (!sol) return;
+    setBajando(solicitudId);
+    try {
+      const lineas = datos.filter(d => d.solicitud_id === solicitudId).map(d => normalizarLinea(d));
+      await descargarArchivosDespacho({ area: sol.area_solicitante, numero: sol.numero, lineas });
+    } catch (e) { aviso("⚠ " + e.message); }
+    finally { setBajando(null); }
   };
 
-  // Los 3 archivos de la solicitud: despacho_, CARGA A WMS_ y CARGA LIBRO 1_
-  const descargarExcel = async (sol) => {
-    let lineas = detalle[sol.id]?.lineas;
-    if (!lineas) { try { lineas = await obtenerLineas(sol.id); } catch (e) { aviso("⚠ " + e.message); return; } }
-    const enc = { numero: sol.numero, area: sol.area_solicitante, solicitante: sol.solicitante_nombre,
-      correo: sol.solicitante_correo, radicadaAt: sol.radicada_at };
-    await descargarArchivosDespacho({ area: sol.area_solicitante, numero: sol.numero, lineas: lineas.map(l => normalizarLinea(l, enc)) });
+  const verHistorial = async (solicitudId) => {
+    const sol = solicitudes.get(solicitudId);
+    setHistorial({ sol, eventos: null });
+    try { const eventos = await obtenerEventos(solicitudId); setHistorial({ sol, eventos }); }
+    catch (e) { setHistorial(null); aviso("⚠ " + e.message); }
   };
 
-  // ── Selección ──
-  const seleccionables = useMemo(() => datos.filter(d => d.estado_codigo === "RADICADA"), [datos]);
-  const seleccionadas  = useMemo(() => datos.filter(d => sel.has(d.id)), [datos, sel]);
-  const todasMarcadas  = seleccionables.length > 0 && seleccionadas.length === seleccionables.length;
+  // ── Selección (por solicitud: marcar una línea marca toda su solicitud) ──
+  // "Marcar todas" toma las Radicadas que cumplen los filtros, en TODAS las páginas.
+  const seleccionables = useMemo(() => {
+    const ids = new Set(filtradas.filter(f => f.estado_codigo === "RADICADA").map(f => f.solicitud_id));
+    return [...ids].map(id => solicitudes.get(id));
+  }, [filtradas, solicitudes]);
+  const seleccionadas  = useMemo(() => [...sel].map(id => solicitudes.get(id)).filter(Boolean), [sel, solicitudes]);
+  const todasMarcadas  = seleccionables.length > 0 && seleccionables.every(s => sel.has(s.id));
   const totalSel = useMemo(() => ({
     lineas: seleccionadas.reduce((a, s) => a + Number(s.total_lineas || 0), 0),
     unidades: seleccionadas.reduce((a, s) => a + Number(s.total_unidades || 0), 0),
   }), [seleccionadas]);
 
   const marcar = (id, on) => setSel(prev => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; });
-  const marcarTodas = (on) => setSel(on ? new Set(seleccionables.map(s => s.id)) : new Set());
+  const marcarTodas = (on) => setSel(prev => {
+    const n = new Set(prev);
+    seleccionables.forEach(s => { if (on) n.add(s.id); else n.delete(s.id); });
+    return n;
+  });
 
   // ── Bloque ──
   const abrirBloque = (items) => {
@@ -233,7 +286,6 @@ export default function Solicitudes({ isMobile }) {
     catch (e) { avisoExcel = "El bloque quedó procesado, pero no se pudo generar el Excel: " + e.message; }
     setBloque({ fase: "listo", items, lote, lineas, avisoExcel });
     setSel(new Set());
-    setDetalle({}); setAbierta(null);
     cargar();
     if (verLotes) cargarLotes();
   };
@@ -247,13 +299,13 @@ export default function Solicitudes({ isMobile }) {
   };
 
   const descargarLote = async (l) => {
-    setBajando(l.id);
+    setBajandoLote(l.id);
     try {
       const lineas = await obtenerLineasLote(l.id);
       if (!lineas.length) { aviso("⚠ Este bloque no tiene líneas disponibles."); return; }
       generarExcelLote({ id: l.id, numero: l.numero, procesadoAt: l.procesado_at, procesadoPor: l.procesado_por, comentario: l.comentario }, lineas);
     } catch (e) { aviso("⚠ " + e.message); }
-    finally { setBajando(null); }
+    finally { setBajandoLote(null); }
   };
 
   const confirmarReversion = async () => {
@@ -263,22 +315,20 @@ export default function Solicitudes({ isMobile }) {
       const r = await revertirLote({ loteId: reversion.id, motivo });
       aviso(`✓ ${reversion.numero} revertido: ${plural(r?.solicitudes_revertidas, "solicitud volvió", "solicitudes volvieron")} a Radicada`);
       setReversion(null); setMotivo("");
-      setDetalle({}); setAbierta(null);
       cargar(); cargarLotes();
     } catch (e) { aviso("⚠ " + e.message); }
     finally { setRevirtiendo(false); }
   };
 
-  const resumen = useMemo(() => {
-    const r = { total: datos.length, lineas: 0, unidades: 0 };
-    datos.forEach(d => { r.lineas += d.total_lineas; r.unidades += Number(d.total_unidades); });
-    return r;
-  }, [datos]);
-
   const campo = { height: 36, padding: "0 10px", fontSize: 13, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box" };
-  const colsFila = isMobile
-    ? (puedeOperar ? "1fr auto 32px" : "1fr auto")
-    : (puedeOperar ? "150px 120px 1fr 100px 80px 110px 20px 32px" : "150px 120px 1fr 100px 80px 110px 20px");
+  const th = { padding: "8px 8px", fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap", background: "#F7FCF9" };
+  const tdC = { padding: "7px 8px", fontSize: 12, color: "#1a2e27", borderBottom: "1px solid #F0F5F3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+  const filtroInput = { width: "100%", height: 26, padding: "0 6px", fontSize: 11, border: "1px solid #D4E5DE", borderRadius: 6, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box" };
+  const ANCHO_CASILLA = 46, ANCHO_ACCIONES = puedeOperar ? 214 : 132;
+  const anchoTabla = (puedeOperar ? ANCHO_CASILLA : 0) + COLUMNAS_LINEAS.reduce((a, c) => a + c.w, 0) + ANCHO_ACCIONES;
+  // La casilla queda fija a la izquierda al desplazar la tabla
+  const fijaIzq = (fondo) => ({ position: "sticky", left: 0, zIndex: 1, background: fondo, boxShadow: "1px 0 0 #E2EDE9" });
+  const btnFila = { height: 26, padding: "0 8px", fontSize: 11, fontWeight: 600, border: "1px solid #D4E5DE", borderRadius: 7, background: "#fff", color: "#0F6E56", cursor: "pointer", whiteSpace: "nowrap" };
 
   return (
     <div style={{ paddingBottom: sel.size > 0 ? 110 : 60 }}>
@@ -286,117 +336,144 @@ export default function Solicitudes({ isMobile }) {
         <div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#1a2e27" }}>{esSolicitante ? "Mis solicitudes" : "Solicitudes radicadas"}</div>
           <div style={{ fontSize: 12, color: "#6B8F80" }}>
-            {plural(resumen.total, "solicitud", "solicitudes")} · {plural(resumen.lineas, "línea", "líneas")} · {num(resumen.unidades)} unidades
+            {plural(resumen.solicitudes, "solicitud", "solicitudes")} · {plural(resumen.lineas, "línea", "líneas")} · {num(resumen.unidades)} unidades{hayFiltrosCol ? " (filtrado)" : ""}
           </div>
         </div>
-        <button onClick={() => { cargar(); if (verLotes) cargarLotes(); }} style={{ ...campo, cursor: "pointer", color: "#0F6E56", fontWeight: 600 }}>↻ Actualizar</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {hayFiltrosCol && <button onClick={() => { setFiltrosCol({}); setPagina(1); }} style={{ ...campo, cursor: "pointer", color: "#B45309", borderColor: "#FCD9A0", fontWeight: 600 }}>Limpiar filtros</button>}
+          <button onClick={() => { cargar(); if (verLotes) cargarLotes(); }} style={{ ...campo, cursor: "pointer", color: "#0F6E56", fontWeight: 600 }}>↻ Actualizar</button>
+        </div>
       </div>
 
-      {/* Filtros */}
+      {/* Rango y estado (consultan la base) */}
       <div style={{ background: "#fff", border: "1px solid #E2EDE9", borderRadius: 14, padding: isMobile ? 12 : "14px 18px", marginBottom: 14,
-        display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 2fr", gap: 10 }}>
-        <label style={lbl}>Desde<input type="date" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} style={campo} /></label>
-        <label style={lbl}>Hasta<input type="date" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} style={campo} /></label>
+        display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 2fr", gap: 10, alignItems: "end" }}>
+        <label style={lbl}>Desde<input type="date" value={filtros.desde} max={filtros.hasta || undefined} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} style={campo} /></label>
+        <label style={lbl}>Hasta<input type="date" value={filtros.hasta} min={filtros.desde || undefined} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} style={campo} /></label>
         <label style={lbl}>Estado
           <select value={filtros.estado} onChange={e => setFiltros(f => ({ ...f, estado: e.target.value }))} style={campo}>
             <option value="">Todos</option>
             {Object.entries(ESTADO_UI).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </label>
-        <label style={{ ...lbl, gridColumn: isMobile ? "span 2" : "auto" }}>Buscar
-          <input placeholder="N° solicitud, área, pedido o solicitante" defaultValue={filtros.texto}
-            onKeyDown={e => { if (e.key === "Enter") setFiltros(f => ({ ...f, texto: e.target.value })); }}
-            onBlur={e => setFiltros(f => (f.texto === e.target.value ? f : { ...f, texto: e.target.value }))} style={campo} />
-        </label>
+        <div style={{ fontSize: 11, color: "#6B8F80", gridColumn: isMobile ? "span 2" : "auto", lineHeight: 1.4 }}>
+          Filtre cada columna en la fila «Filtrar…» de la tabla. Escriba parte del texto o use <b>*</b> como comodín (ej. <b>bell*group</b>, <b>PTC*2025</b>).
+        </div>
       </div>
 
       {error && <div style={{ background: "#FFF5F5", border: "1px solid #F5A0A0", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#C0392B" }}>{error}</div>}
 
       <div style={{ background: "#fff", border: "1px solid #E2EDE9", borderRadius: 14, overflow: "hidden" }}>
-        {/* Encabezado de la lista: "marcar todas" a la derecha */}
+        {/* Encabezado de la lista: cuántas radicadas hay para marcar */}
         {puedeOperar && !cargando && datos.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: "6px 16px", background: "#F7FCF9", borderBottom: "1px solid #E2EDE9" }}>
-            <span style={{ fontSize: 11, color: "#6B8F80" }}>
-              {seleccionables.length === 0
-                ? "No hay solicitudes Radicadas en esta lista"
-                : sel.size > 0 ? `${sel.size} de ${seleccionables.length} radicadas marcadas` : `Marcar las ${seleccionables.length} radicadas`}
-            </span>
-            <Casilla marcada={todasMarcadas} parcial={sel.size > 0} deshabilitada={seleccionables.length === 0}
-              onChange={marcarTodas} titulo="Marcar o desmarcar todas las solicitudes Radicadas de la lista" />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "#F7FCF9", borderBottom: "1px solid #E2EDE9", fontSize: 11.5, color: "#44574F" }}>
+            {seleccionables.length === 0
+              ? "No hay solicitudes Radicadas en esta lista."
+              : sel.size > 0
+                ? <><b>{plural(sel.size, "solicitud marcada", "solicitudes marcadas")}</b> · la casilla del encabezado marca las {num(seleccionables.length)} radicadas que cumplen los filtros (todas las páginas).</>
+                : <>Marque con la casilla de la izquierda las solicitudes a procesar. La del encabezado marca las {num(seleccionables.length)} radicadas que cumplen los filtros.</>}
           </div>
         )}
 
         {cargando && <div style={{ padding: 20, fontSize: 13, color: "#6B8F80" }}>Cargando…</div>}
-        {!cargando && datos.length === 0 && <div style={{ padding: 24, fontSize: 13, color: "#9CB8AE", textAlign: "center" }}>
+        {!cargando && !error && datos.length === 0 && <div style={{ padding: 24, fontSize: 13, color: "#9CB8AE", textAlign: "center" }}>
           {filtros.estado === "RADICADA" ? "No hay solicitudes Radicadas pendientes en el rango seleccionado." : "No hay solicitudes en el rango seleccionado."}
         </div>}
-        {!cargando && datos.map(sol => {
-          const ui = uiEstado(sol.estado_codigo, sol.estado_nombre);
-          const det = detalle[sol.id];
-          const esRadicada = sol.estado_codigo === "RADICADA";
-          const marcada = sel.has(sol.id);
-          return (
-            <div key={sol.id} style={{ borderBottom: "1px solid #F0F7F4" }}>
-              <div onClick={() => abrir(sol)} style={{ display: "grid", cursor: "pointer", alignItems: "center", gap: 10, padding: "8px 16px",
-                gridTemplateColumns: colsFila, background: marcada ? "#EAF7F1" : abierta === sol.id ? "#F7FCF9" : "#fff" }}>
-                <div style={{ fontWeight: 700, color: "#0F6E56", fontSize: 13 }}>{sol.numero}
-                  {isMobile && <div style={{ fontSize: 11, color: "#6B8F80", fontWeight: 400 }}>{fechaHoraBogota(sol.radicada_at)} · {sol.area_solicitante}</div>}
-                </div>
-                {!isMobile && <div style={{ fontSize: 12, color: "#44574F" }}>{fechaHoraBogota(sol.radicada_at)}</div>}
-                {!isMobile && <div style={{ fontSize: 12, color: "#1a2e27", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {sol.area_solicitante} · {sol.solicitante_nombre}{sol.numero_pedido_origen ? ` · Pedido ${sol.numero_pedido_origen}` : ""}</div>}
-                {!isMobile && <div style={{ fontSize: 12, color: "#6B8F80" }}>{sol.origen === "PDF" ? "Desde PDF" : "Manual"}</div>}
-                {!isMobile && <div style={{ fontSize: 12, color: "#44574F", textAlign: "right" }}>{sol.total_lineas} lín.</div>}
-                <span title={sol.lote_numero ? `Bloque ${sol.lote_numero}` : ""} style={{ fontSize: 11, fontWeight: 600, color: ui.color, background: ui.bg, padding: "3px 10px", borderRadius: 20, textAlign: "center", whiteSpace: "nowrap" }}>{ui.label}</span>
-                {!isMobile && <span style={{ color: "#9CB8AE", transform: abierta === sol.id ? "rotate(180deg)" : "none", transition: "transform .2s", display: "inline-block" }}>▾</span>}
-                {puedeOperar && (
-                  <Casilla marcada={marcada} deshabilitada={!esRadicada} onChange={on => marcar(sol.id, on)}
-                    titulo={esRadicada ? `Marcar ${sol.numero} para procesar` : `${sol.numero} ya está ${ui.label}`} />
-                )}
-              </div>
 
-              {abierta === sol.id && (
-                <div style={{ padding: isMobile ? "4px 12px 14px" : "4px 16px 16px 16px", background: "#F7FCF9" }}>
-                  {!det && <div style={{ fontSize: 12, color: "#6B8F80", padding: 8 }}>Cargando detalle…</div>}
-                  {det && (
-                    <>
-                      <div style={{ overflowX: "auto", border: "1px solid #E2EDE9", borderRadius: 8, background: "#fff", marginBottom: 10 }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 720 }}>
-                          <thead><tr style={{ background: "#F2F8F5", color: "#6B8F80" }}>
-                            {["#", "Entrega", "NIT", "Destinatario", "Ciudad", "Material", "Cantidad", "UM", "Bodega"].map(h => <th key={h} style={{ padding: "7px 8px", textAlign: h === "Cantidad" ? "right" : "left", fontWeight: 500 }}>{h}</th>)}
-                          </tr></thead>
-                          <tbody>{det.lineas.map(l => (
-                            <tr key={l.linea_nro} style={{ borderTop: "1px solid #F0F7F4" }}>
-                              <td style={td}>{l.linea_nro}</td><td style={td}>{l.entrega}</td><td style={td}>{l.destinatario_nit}</td>
-                              <td style={td}>{l.destinatario_nombre}</td><td style={td}>{l.destinatario_ciudad}</td><td style={td}>{l.material}</td>
-                              <td style={{ ...td, textAlign: "right" }}>{Number(l.cantidad).toLocaleString("es-CO")}</td><td style={td}>{l.um}</td><td style={td}>{l.bodega}</td>
-                            </tr>))}</tbody>
-                        </table>
-                      </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10 }}>
-                        <span style={{ fontSize: 11, color: "#6B8F80", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Línea de tiempo:</span>
-                        {det.eventos.map((ev, i) => (
-                          <span key={i} title={ev.comentario || ""} style={{ fontSize: 11, color: "#44574F", background: "#fff", border: "1px solid #E2EDE9", borderRadius: 20, padding: "2px 9px" }}>
-                            {uiEstado(ev.estado_nuevo).label} · {fechaHoraBogota(ev.created_at)}
-                          </span>))}
-                        {sol.lote_numero && <span style={{ fontSize: 11, fontWeight: 600, color: "#0F6E56", background: "#E1F5EE", borderRadius: 20, padding: "2px 9px" }}>Bloque {sol.lote_numero}</span>}
-                      </div>
-                      {sol.motivo_anulacion && <div style={{ fontSize: 12, color: "#C0392B", marginBottom: 10 }}>Motivo de anulación: {sol.motivo_anulacion}</div>}
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button onClick={() => descargarExcel(sol)} style={btnSec}>⬇ Descargar los 3 Excel de esta solicitud</button>
-                        {puedeOperar && esRadicada && (
-                          <button onClick={() => abrirBloque([sol])} style={{ ...btnSec, background: "#0F6E56", color: "#fff", borderColor: "#0F6E56" }}>Procesar solo esta</button>
+        {!cargando && datos.length > 0 && (
+          <>
+            {/* Tabla con TODOS los campos de "Excel desde PDF", una fila por línea */}
+            <div style={{ overflow: "auto", maxHeight: "62vh" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: anchoTabla, minWidth: "100%" }}>
+                <colgroup>
+                  {puedeOperar && <col style={{ width: ANCHO_CASILLA }} />}
+                  {COLUMNAS_LINEAS.map(c => <col key={c.key} style={{ width: c.w }} />)}
+                  <col style={{ width: ANCHO_ACCIONES }} />
+                </colgroup>
+                <thead style={{ position: "sticky", top: 0, zIndex: 3 }}>
+                  <tr>
+                    {puedeOperar && (
+                      <th style={{ ...th, ...fijaIzq("#F7FCF9"), padding: "2px 7px" }}>
+                        <Casilla marcada={todasMarcadas} parcial={seleccionables.some(s => sel.has(s.id))} deshabilitada={seleccionables.length === 0}
+                          onChange={marcarTodas} titulo="Marcar o desmarcar todas las solicitudes Radicadas que cumplen los filtros" />
+                      </th>
+                    )}
+                    {COLUMNAS_LINEAS.map(c => <th key={c.key} style={{ ...th, textAlign: c.num ? "right" : "left" }}>{c.titulo}</th>)}
+                    <th style={{ ...th, textAlign: "center" }}>Acciones</th>
+                  </tr>
+                  {/* Filtros por columna */}
+                  <tr>
+                    {puedeOperar && <th style={{ ...th, ...fijaIzq("#F7FCF9"), borderBottom: "1px solid #E2EDE9" }} />}
+                    {COLUMNAS_LINEAS.map(c => (
+                      <th key={c.key} style={{ ...th, padding: "0 6px 6px", borderBottom: "1px solid #E2EDE9" }}>
+                        {c.key === "estado" ? (
+                          <select value={filtrosCol.estado || ""} onChange={e => filtrarCol("estado", e.target.value)} style={filtroInput}>
+                            <option value="">Todos</option>
+                            {Object.values(ESTADO_UI).map(v => <option key={v.label} value={v.label}>{v.label}</option>)}
+                          </select>
+                        ) : (
+                          <input value={filtrosCol[c.key] || ""} placeholder="Filtrar…" title="Contiene el texto · use * como comodín"
+                            onChange={e => filtrarCol(c.key, e.target.value)} style={filtroInput} />
                         )}
-                      </div>
-                    </>
+                      </th>
+                    ))}
+                    <th style={{ ...th, borderBottom: "1px solid #E2EDE9" }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibles.length === 0 && (
+                    <tr><td colSpan={COLUMNAS_LINEAS.length + (puedeOperar ? 2 : 1)} style={{ ...tdC, textAlign: "center", color: "#9CB8AE", padding: 18 }}>Ninguna línea cumple los filtros.</td></tr>
                   )}
-                </div>
-              )}
+                  {visibles.map((f, i) => {
+                    const est = uiEstado(f.estado_codigo, f.estado_nombre);
+                    const esRadicada = f.estado_codigo === "RADICADA";
+                    const marcada = sel.has(f.solicitud_id);
+                    const primeraDeSolicitud = i === 0 || visibles[i - 1].solicitud_id !== f.solicitud_id;
+                    const fondo = marcada ? "#EAF7F1" : primeraDeSolicitud ? "#fff" : "#FCFEFD";
+                    const bordeSup = primeraDeSolicitud && i > 0 ? "2px solid #DCEAE4" : undefined;
+                    return (
+                      <tr key={f.linea_id} style={{ background: fondo }}>
+                        {puedeOperar && (
+                          <td style={{ ...tdC, ...fijaIzq(fondo), padding: "0 7px", borderTop: bordeSup }}>
+                            <Casilla marcada={marcada} deshabilitada={!esRadicada} onChange={on => marcar(f.solicitud_id, on)}
+                              titulo={esRadicada ? `Marcar ${f.numero} (todas sus líneas) para procesar` : `${f.numero} ya está ${est.label}`} />
+                          </td>
+                        )}
+                        {COLUMNAS_LINEAS.map(c => {
+                          const v = valorCelda(f, c.key);
+                          if (c.key === "estado") return (
+                            <td key={c.key} style={{ ...tdC, borderTop: bordeSup }}><span title={f.lote_numero ? `Bloque ${f.lote_numero}` : ""} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "2px 9px", borderRadius: 20 }}>{est.label}</span></td>
+                          );
+                          return (
+                            <td key={c.key} title={String(v)} style={{ ...tdC, borderTop: bordeSup, textAlign: c.num ? "right" : "left", fontWeight: c.fuerte ? 700 : 400, color: c.fuerte ? "#0F6E56" : (v === "" ? "#C9D6D0" : "#1a2e27") }}>
+                              {c.num ? num(v) : (v === "" ? "—" : v)}
+                            </td>
+                          );
+                        })}
+                        <td style={{ ...tdC, borderTop: bordeSup, textAlign: "center", overflow: "visible" }}>
+                          {primeraDeSolicitud && (
+                            <span style={{ display: "inline-flex", gap: 5 }}>
+                              <button onClick={() => descargarExcel(f.solicitud_id)} disabled={bajando === f.solicitud_id} title={`Descargar despacho_, CARGA A WMS_ y CARGA LIBRO 1_ de ${f.numero}`}
+                                style={{ ...btnFila, cursor: bajando === f.solicitud_id ? "wait" : "pointer" }}>{bajando === f.solicitud_id ? "…" : "⬇ .xlsx"}</button>
+                              <button onClick={() => verHistorial(f.solicitud_id)} title={`Línea de tiempo de ${f.numero}`} style={btnFila}>🕑</button>
+                              {puedeOperar && esRadicada && (
+                                <button onClick={() => abrirBloque([solicitudes.get(f.solicitud_id)])} title={`Procesar solo ${f.numero}`}
+                                  style={{ ...btnFila, background: "#0F6E56", color: "#fff", borderColor: "#0F6E56" }}>Procesar</button>
+                              )}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          );
-        })}
+            <Paginador total={filtradas.length} pagina={paginaActual} porPagina={porPagina}
+              onPagina={setPagina} onPorPagina={cambiarPorPagina} unidad="líneas" />
+          </>
+        )}
       </div>
-
       {/* ── Bloques procesados (historial + re-descarga) ── */}
       {veBloques && (
         <div style={{ background: "#fff", border: "1px solid #E2EDE9", borderRadius: 14, overflow: "hidden", marginTop: 14 }}>
@@ -433,7 +510,7 @@ export default function Solicitudes({ isMobile }) {
                         <td style={{ ...tdL, textAlign: "right" }}>
                           {!revertido && (
                             <span style={{ display: "inline-flex", gap: 6 }}>
-                              <button onClick={() => descargarLote(l)} disabled={bajando === l.id} style={{ ...btnSec, padding: "5px 10px", fontSize: 11 }}>{bajando === l.id ? "…" : "⬇ Excel"}</button>
+                              <button onClick={() => descargarLote(l)} disabled={bajandoLote === l.id} style={{ ...btnSec, padding: "5px 10px", fontSize: 11 }}>{bajandoLote === l.id ? "…" : "⬇ Excel"}</button>
                               {esAdmin && <button onClick={() => { setReversion(l); setMotivo(""); }} style={{ ...btnSec, padding: "5px 10px", fontSize: 11, color: "#C0392B", borderColor: "#F5C6C0" }}>Revertir</button>}
                             </span>
                           )}
@@ -545,6 +622,28 @@ export default function Solicitudes({ isMobile }) {
         </div>
       )}
 
+      {/* ── Línea de tiempo de una solicitud ── */}
+      {historial && (
+        <div onClick={() => setHistorial(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(10,30,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, padding: "20px 22px" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#1a2e27" }}>Línea de tiempo · {historial.sol?.numero}</div>
+            <div style={{ fontSize: 12, color: "#6B8F80", marginBottom: 12 }}>
+              {historial.sol?.area_solicitante} · {historial.sol?.solicitante_nombre} · {plural(historial.sol?.total_lineas, "línea", "líneas")}
+              {historial.sol?.lote_numero ? ` · Bloque ${historial.sol.lote_numero}` : ""}
+            </div>
+            {!historial.eventos && <div style={{ fontSize: 12, color: "#6B8F80" }}>Cargando…</div>}
+            {historial.eventos && historial.eventos.map((ev, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 0", borderBottom: "1px solid #F0F5F3", fontSize: 12.5 }}>
+                <span style={{ fontWeight: 600, color: uiEstado(ev.estado_nuevo).color, minWidth: 92 }}>{uiEstado(ev.estado_nuevo).label}</span>
+                <span style={{ color: "#44574F" }}>{fechaHoraBogota(ev.created_at)}{ev.comentario ? ` · ${ev.comentario}` : ""}</span>
+              </div>))}
+            <div style={{ textAlign: "right", marginTop: 14 }}>
+              <button onClick={() => setHistorial(null)} style={btnSec}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && <div style={{ position: "fixed", bottom: sel.size > 0 ? 84 : 20, left: "50%", transform: "translateX(-50%)", zIndex: 2100, background: "#1a2e27", color: "#fff",
         padding: "10px 20px", borderRadius: 24, fontSize: 13, fontWeight: 500, maxWidth: "90vw" }}>{toast}</div>}
     </div>
@@ -552,6 +651,6 @@ export default function Solicitudes({ isMobile }) {
 }
 
 const lbl = { display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#6B8F80", fontWeight: 500 };
-const td = { padding: "6px 8px", color: "#1a2e27" };
 const tdL = { padding: "8px 10px", color: "#1a2e27", whiteSpace: "nowrap" };
 const btnSec = { padding: "7px 14px", fontSize: 12, fontWeight: 600, border: "1px solid #C5DDD4", borderRadius: 8, background: "#fff", color: "#0F6E56", cursor: "pointer" };
+

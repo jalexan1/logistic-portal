@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
 import { BD_CLIENTES, buscarPorNombre, buscarNombreExacto } from "../services/clientesService";
 import { radicarSolicitud, nuevaLlave, obtenerLineas } from "../services/solicitudesService";
-import { cargarItemsEan, eanDeSku } from "../services/maestrosService";
+import { cargarItemsEan, eanDeSku, cargarCiudades, departamentoDeCiudad } from "../services/maestrosService";
 import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
 import BuscadorMaestro from "./BuscadorMaestro";
 import { fechaHoraBogota } from "../utils/fechas";
@@ -313,7 +313,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       const itemEan = eanDeSku(sku);
       parsed.push({
         entrega: entregaPdf, destinatario: destinatarioNit, nombre: destinatarioNombre,
-        direccion: maestro.direccion || "", lugar: destinatarioCiudad, departamento: maestro.departamento || "",
+        direccion: maestro.direccion || "", lugar: destinatarioCiudad, departamento: maestro.departamento || departamentoDeCiudad(destinatarioCiudad || maestro.ciudad),
         telefono: maestro.telefono || "",
         material: sku, ean: itemEan ? itemEan.ean : "", cantidad: cantidad || "", um: "BUL", item: "1001", bodega: "021",
         producto, precio, descuentoPct, subtotalLinea, totalLinea,
@@ -374,6 +374,8 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     try {
       // Maestro Item/EAN para completar la columna EAN (si falla, el EAN se digita)
       try { await cargarItemsEan(); } catch (e) { if (showToast) showToast("⚠ " + e.message + ". El EAN deberá digitarse."); }
+      // Ciudad → departamento: completa el departamento si el maestro de clientes no lo trae
+      try { await cargarCiudades(); } catch { /* sin maestro de ciudades: el departamento se digita */ }
       if (!window.pdfjsLib) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
@@ -425,7 +427,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   };
   const datosMaestro = (nit, m) => ({
     destinatario: nit, nombre: m.nombre, lugar: m.ciudad || "", direccion: m.direccion || "",
-    departamento: m.departamento || "", ...(m.telefono ? { telefono: m.telefono } : {}),
+    departamento: m.departamento || departamentoDeCiudad(m.ciudad), ...(m.telefono ? { telefono: m.telefono } : {}),
   });
 
   // Al salir de la celda NIT: si existe en el maestro trae nombre, ciudad, dirección…;
@@ -450,6 +452,13 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       aplicarDestinatario(idx, { nombre, destinatario: "" }, { destinatario: true, nombre: !nombre });
       if (nombre && showToast) showToast(`⚠ "${nombre}" no está en el maestro: se borró el NIT. Use la lupa 🔍 para elegir el destinatario.`);
     }
+  };
+  // Ciudad: si cambia, el departamento se toma del maestro de ciudades
+  // (solo si se conoce; si no, se deja el que estaba para digitarlo).
+  const confirmarCiudad = (idx, valor) => {
+    if (String(valor || "").trim() === valorAlEntrar.current) return;
+    const dep = departamentoDeCiudad(valor);
+    if (dep) updatePdfRow(idx, "departamento", dep);
   };
   // SKU: al cambiarlo se vuelve a buscar el EAN en el maestro Item/EAN
   const confirmarSku = (idx, valor) => {
@@ -621,9 +630,9 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
                 <span><b>{totalPendientes} dato{totalPendientes !== 1 ? "s" : ""} por digitar o corregir</b> (celdas en amarillo). Son obligatorios para radicar. Use la lupa 🔍 para buscar en los maestros.</span>
               </div>
             )}
-            <div style={{ overflowX:"auto", marginBottom:14, borderRadius:8, border:"1px solid #E2EDE9" }}>
+            <div style={{ overflow:"auto", maxHeight:"62vh", marginBottom:14, borderRadius:8, border:"1px solid #E2EDE9" }}>
               <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1480, fontSize:12 }}>
-                <thead><tr style={{ background:"#F2F8F5" }}>
+                <thead style={{ position:"sticky", top:0, zIndex:2 }}><tr style={{ background:"#F2F8F5" }}>
                   <th style={{ width:32, padding:"8px 6px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:"center", borderBottom:"1px solid #E2EDE9" }}>#</th>
                   {PREVIEW_COLS.map(c => <th key={c.key} style={{ width:c.w, padding:"8px 8px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:c.numeric?"right":"left", borderBottom:"1px solid #E2EDE9", whiteSpace:"nowrap" }}>
                     {c.label}{OBLIGATORIOS.includes(c.key) && <span style={{ color:"#C0392B" }}> *</span>}
@@ -648,6 +657,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
                               if (c.key === "destinatario") confirmarNit(idx, e.target.value);
                               else if (c.key === "nombre") confirmarNombre(idx, e.target.value);
                               else if (c.key === "material") confirmarSku(idx, e.target.value);
+                              else if (c.key === "lugar") { confirmarCiudad(idx, e.target.value); if (rowErrors[`${idx}-lugar`] && String(e.target.value).trim()) marcar(idx, "lugar", false); }
                               else if (rowErrors[`${idx}-${c.key}`] && String(e.target.value).trim()) marcar(idx, c.key, false);
                             }}
                           />
