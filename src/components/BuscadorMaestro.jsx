@@ -4,9 +4,14 @@
 //   tipo="item"         → core.item_ean (Item, EAN, descripción)
 // "*" o "%" = cualquier texto en medio (ej. "bell*group"); siempre busca "contiene".
 // Al elegir una fila llama onElegir(fila) y se cierra.
+// Fase 4: resultados paginados (5, 10, 15, 30, 70, 100, 150 · arranca en 10).
 // ─────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useRef, useState } from "react";
 import { buscarDestinatarios, buscarItems } from "../services/maestrosService";
+import Paginador from "./Paginador";
+
+const OPCIONES_POPUP = [5, 10, 15, 30, 70, 100, 150];
+const LIMITE = 500;   // máximo de resultados por búsqueda
 
 const CONFIG = {
   destinatario: {
@@ -29,11 +34,13 @@ export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(10);
   const primero = useRef(null);
 
   const buscar = async (f = filtros) => {
     setCargando(true); setError("");
-    try { setFilas(await cfg.buscar(f)); }
+    try { setFilas(await cfg.buscar(f, LIMITE)); setPagina(1); }
     catch (e) { setError(e.message); setFilas([]); }
     finally { setCargando(false); }
   };
@@ -46,6 +53,10 @@ export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [onCerrar]);
+
+  // Página visible de los resultados
+  const paginaActual = Math.min(pagina, Math.max(1, Math.ceil(filas.length / porPagina)));
+  const visibles = filas.slice((paginaActual - 1) * porPagina, paginaActual * porPagina);
 
   const campo = { height: 34, padding: "0 10px", fontSize: 13, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box", width: "100%" };
 
@@ -80,7 +91,7 @@ export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar
               <thead style={{ position: "sticky", top: 0 }}>
                 <tr>{cfg.columnas.map(([k, t, w]) => <th key={k} style={{ minWidth: w, textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: ".06em", background: "#F7FCF9", borderBottom: "1px solid #E2EDE9" }}>{t}</th>)}</tr>
               </thead>
-              <tbody>{filas.map((f, i) => (
+              <tbody>{visibles.map((f, i) => (
                 <tr key={i} onClick={() => { onElegir(f); onCerrar(); }} style={{ cursor: "pointer", borderBottom: "1px solid #F0F5F3" }}
                   onMouseEnter={e => e.currentTarget.style.background = "#EAF7F1"} onMouseLeave={e => e.currentTarget.style.background = ""}>
                   {cfg.columnas.map(([k]) => <td key={k} style={{ padding: "8px 10px", color: f[k] ? "#1a2e27" : "#C9D6D0" }}>{f[k] || "—"}</td>)}
@@ -88,8 +99,12 @@ export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar
             </table>
           )}
         </div>
-        <div style={{ padding: "8px 18px", fontSize: 11, color: "#9CB8AE", borderTop: "1px solid #E2EDE9" }}>
-          {filas.length >= 100 ? "Se muestran los primeros 100 resultados: afine la búsqueda." : `${filas.length} resultado${filas.length !== 1 ? "s" : ""} · clic en una fila para usarla`}
+        {!cargando && filas.length > 0 && (
+          <Paginador total={filas.length} pagina={paginaActual} porPagina={porPagina} opciones={OPCIONES_POPUP} unidad="resultados"
+            onPagina={setPagina} onPorPagina={n => { setPorPagina(n); setPagina(1); }} />
+        )}
+        <div style={{ padding: "6px 18px", fontSize: 11, color: "#9CB8AE", borderTop: "1px solid #E2EDE9" }}>
+          {filas.length >= LIMITE ? `Se muestran los primeros ${LIMITE} resultados: afine la búsqueda.` : "Clic en una fila para usarla."}
         </div>
       </div>
     </div>

@@ -1,12 +1,13 @@
 // ── Paginador.jsx ────────────────────────────────────────────────────────
-// Pie de tabla: "Filas por página" (5, 10, 15, 30, 50, 80, 150) + navegación.
+// Pie de tabla: "Filas por página" + navegación.
+// Opciones por defecto 5, 10, 15, 30, 50, 80, 150 (prop `opciones` para cambiarlas).
 // Controlado: el padre guarda `pagina` (desde 1) y `porPagina`.
 // ─────────────────────────────────────────────────────────────────────────
 import React from "react";
 
 const OPCIONES_POR_PAGINA = [5, 10, 15, 30, 50, 80, 150];
 
-export default function Paginador({ total, pagina, porPagina, onPagina, onPorPagina, unidad = "filas" }) {
+export default function Paginador({ total, pagina, porPagina, onPagina, onPorPagina, unidad = "filas", opciones = OPCIONES_POR_PAGINA }) {
   const paginas = Math.max(1, Math.ceil(total / porPagina));
   const actual = Math.min(Math.max(1, pagina), paginas);
   const desde = total === 0 ? 0 : (actual - 1) * porPagina + 1;
@@ -25,7 +26,7 @@ export default function Paginador({ total, pagina, porPagina, onPagina, onPorPag
         <select value={porPagina} onChange={e => onPorPagina(Number(e.target.value))}
           style={{ height: 32, padding: "0 28px 0 10px", fontSize: 13, fontWeight: 600, border: "1px solid #C5DDD4", borderRadius: 8, color: "#0F6E56", cursor: "pointer",
             background: "#fff url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%230F6E56' stroke-width='1.6' fill='none'/%3E%3C/svg%3E\") no-repeat right 10px center" }}>
-          {OPCIONES_POR_PAGINA.map(n => <option key={n} value={n}>{n}</option>)}
+          {opciones.map(n => <option key={n} value={n}>{n}</option>)}
         </select>
       </label>
       <span style={{ fontSize: 12, color: "#6B8F80" }}>
