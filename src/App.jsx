@@ -3,6 +3,7 @@ import PortalDespachos from "./components/PortalDespachos";
 import InventarioPasillos from "./components/InventarioPasillos";
 import Utilidades from "./components/utilidades/Utilidades"; // ── NUEVO: módulo Utilidades
 import Solicitudes from "./components/Solicitudes";
+import Clientes from "./components/Clientes";
 import { useAuth } from "./components/auth/authContext";
 import { PLATAFORMA_URL } from "./lib/supabase";
 
@@ -59,6 +60,21 @@ const VISTAS = [
       </svg>
     ),
   },
+  // Maestro de clientes: solo supervisor (operador) y administrador de Despachos
+  {
+    id: "clientes",
+    label: "Clientes",
+    labelCorto: "Clientes",
+    requiere: ["DESPACHOS"],
+    rolesPermitidos: ["operador", "admin"],
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="6" cy="5" r="2.6" stroke="currentColor" strokeWidth="1.3"/>
+        <path d="M1.5 13.5c.4-2.4 2.2-3.8 4.5-3.8s4.1 1.4 4.5 3.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+        <path d="M11 3.2a2.3 2.3 0 0 1 0 4.4M12.4 9.9c1.2.5 1.9 1.7 2.1 3.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
   // ── NUEVO: Utilidades ──────────────────────────────────────────────────
   {
     id: "utilidades",
@@ -83,7 +99,7 @@ export default function App() {
   const { perfil, roles, salir } = useAuth();
 
   // Solo las vistas permitidas por los accesos del usuario (core.accesos)
-  const vistas = VISTAS.filter(v => v.requiere.some(app => roles?.[app]));
+  const vistas = VISTAS.filter(v => v.requiere.some(app => roles?.[app] && (!v.rolesPermitidos || v.rolesPermitidos.includes(roles[app]))));
   const inicial = (() => {
     const pedida = new URLSearchParams(window.location.search).get("vista");
     return vistas.find(v => v.id === pedida)?.id || vistas[0]?.id;
@@ -182,6 +198,7 @@ export default function App() {
         {vista === "despachos"  && <PortalDespachos isMobile={isMobile} />}
         {vista === "solicitudes" && <Solicitudes isMobile={isMobile} />}
         {vista === "inventario" && <InventarioPasillos isMobile={isMobile} />}
+        {vista === "clientes"   && <Clientes />}
         {vista === "utilidades" && <Utilidades isMobile={isMobile} />} {/* ── NUEVO */}
       </div>
 

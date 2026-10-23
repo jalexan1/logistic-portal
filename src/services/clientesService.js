@@ -18,10 +18,10 @@ export async function cargarDestinatarios({ forzar = false } = {}) {
   const nuevos = {};
   for (let desde = 0; ; desde += PAGINA) {
     const { data, error } = await core().from("destinatarios")
-      .select("nit,nombre,ciudad,direccion,departamento,telefono").eq("activo", true)
+      .select("nit,nombre,ciudad,direccion,departamento,telefono,estado_revision").eq("activo", true)
       .order("nit").range(desde, desde + PAGINA - 1);
     if (error) throw new Error("No se pudo cargar el maestro de destinatarios: " + error.message);
-    data.forEach(d => { nuevos[String(d.nit).trim()] = { nombre: d.nombre, ciudad: d.ciudad || "", direccion: d.direccion || "", departamento: d.departamento || "", telefono: d.telefono || "" }; });
+    data.forEach(d => { nuevos[String(d.nit).trim()] = { nombre: d.nombre, ciudad: d.ciudad || "", direccion: d.direccion || "", departamento: d.departamento || "", telefono: d.telefono || "", estado_revision: d.estado_revision || "APROBADO" }; });
     if (data.length < PAGINA) break;
   }
   Object.keys(BD_CLIENTES).forEach(k => delete BD_CLIENTES[k]);
@@ -29,6 +29,15 @@ export async function cargarDestinatarios({ forzar = false } = {}) {
   cargadoEn = Date.now();
   return Object.keys(BD_CLIENTES).length;
 }
+
+// Cliente recién creado desde el popup de Despachos: queda disponible de
+// inmediato para autocompletar y validar NIT / nombre en la pantalla.
+export const registrarCliente = (nit, c) => {
+  BD_CLIENTES[String(nit).trim()] = {
+    nombre: c.nombre, ciudad: c.ciudad || "", direccion: c.direccion || "",
+    departamento: c.departamento || "", telefono: c.telefono || "", estado_revision: c.estado_revision || "PENDIENTE",
+  };
+};
 
 export const buscarPorNit = (nit) => BD_CLIENTES[String(nit).trim()] || null;
 

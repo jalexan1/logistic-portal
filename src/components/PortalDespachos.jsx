@@ -5,6 +5,7 @@ import { radicarSolicitud, nuevaLlave, obtenerLineas } from "../services/solicit
 import { cargarItemsEan, eanDeSku, cargarCiudades, departamentoDeCiudad } from "../services/maestrosService";
 import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
 import BuscadorMaestro from "./BuscadorMaestro";
+import { leerModeloNoviembre2026, normalizarSku, NOMBRE_MODELO_NOVIEMBRE_2026 } from "../services/pdfModeloNoviembre2026";
 import { fechaHoraBogota } from "../utils/fechas";
 import { useAuth } from "./auth/authContext";
 import SolicitudesDelDia from "./SolicitudesDelDia";
@@ -235,6 +236,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const [enviandoPdf, setEnviandoPdf] = useState(false);
   const [lupa, setLupa] = useState(null);            // { tipo: 'destinatario'|'item', idx, inicial }
   const [noMaestro, setNoMaestro] = useState(null);  // destinatario del PDF que no está en el maestro
+  const [modeloLeido, setModeloLeido] = useState(""); // modelo de lectura usado (original / modelo_noviembre_2026)
   const valorAlEntrar = useRef("");                  // valor de la celda al entrar (para saber si cambió)
   const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
   const pdfInputRef = useRef(null);
@@ -249,15 +251,15 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     const ENTREGA_RE = /^[A-Za-z]{2,10}\d{5,}$/;
     const hashIdx = lines.findIndex(l => l.startsWith("#"));
     const encabezado = lines.slice(0, hashIdx !== -1 ? hashIdx : Math.min(lines.length, 8));
-    const entregaPdf = encabezado.find(l => ENTREGA_RE.test(l)) || numeroPedido;
+    let entregaPdf = encabezado.find(l => ENTREGA_RE.test(l)) || numeroPedido;
     const dirigidoIdx = lines.findIndex(l => /^dirigido a$/i.test(l));
-    const nombreDestinatario = dirigidoIdx !== -1 && lines[dirigidoIdx + 1] ? lines[dirigidoIdx + 1].trim() : "";
-    const bdMatch = buscarPorNombre(nombreDestinatario);
-    const destinatarioNit    = bdMatch ? bdMatch[0] : "";
+    let nombreDestinatario = dirigidoIdx !== -1 && lines[dirigidoIdx + 1] ? lines[dirigidoIdx + 1].trim() : "";
+    let bdMatch = buscarPorNombre(nombreDestinatario);
+    let destinatarioNit    = bdMatch ? bdMatch[0] : "";
     // Con coincidencia en el maestro se usa el nombre del maestro (NIT y nombre quedan alineados)
-    const destinatarioNombre = bdMatch ? bdMatch[1].nombre : nombreDestinatario;
-    const destinatarioCiudad = bdMatch ? bdMatch[1].ciudad : "";
-    const maestro = bdMatch ? bdMatch[1] : {};
+    let destinatarioNombre = bdMatch ? bdMatch[1].nombre : nombreDestinatario;
+    let destinatarioCiudad = bdMatch ? bdMatch[1].ciudad : "";
+    let maestro = bdMatch ? bdMatch[1] : {};
 
     const SKU_RE = /^[A-Z][A-Z0-9\-]*$|^[A-Z]{2,}$/;
     const BROKEN_SKU_RE = /^([A-Z][A-Z0-9]+)\s*-\s*$/;
@@ -322,14 +324,71 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       while (i < lines.length) { if (STOP.some(sw => lines[i].toLowerCase().startsWith(sw))) break; if (isSku(lines[i])) break; i++; }
     }
 
+    // ── Respaldo: modelo_noviembre_2026 ──────────────────────────────────
+    // El modelo original manda. Solo si dejó algo sin leer (destinatario,
+    // entrega, filas o cantidades) se lee el PDF con el modelo_noviembre_2026
+    // y se completa ÚNICAMENTE lo que faltó.
+    let modelo = "modelo_original";
+    let m2 = null;
+    const faltaAlgo = !nombreDestinatario || !entregaPdf || parsed.length === 0 || parsed.some(r => !(parseFloat(r.cantidad) > 0));
+    if (faltaAlgo) {
+      m2 = leerModeloNoviembre2026(fullText);
+      const aporta = (!nombreDestinatario && m2.nombreDestinatario) || (!entregaPdf && m2.entrega)
+        || (parsed.length === 0 && m2.filas.length > 0)
+        || (parsed.some(r => !(parseFloat(r.cantidad) > 0)) && m2.filas.some(f => f.cantidad > 0));
+      if (!aporta) m2 = null;
+    }
+    if (m2) {
+      modelo = NOMBRE_MODELO_NOVIEMBRE_2026;
+      if (!entregaPdf && m2.entrega) entregaPdf = m2.entrega;
+      if (!nombreDestinatario && m2.nombreDestinatario) {
+        nombreDestinatario = m2.nombreDestinatario;           // "Para:" del PDF
+        bdMatch = buscarPorNombre(nombreDestinatario);
+        destinatarioNit    = bdMatch ? bdMatch[0] : "";
+        destinatarioNombre = bdMatch ? bdMatch[1].nombre : nombreDestinatario;
+        destinatarioCiudad = bdMatch ? bdMatch[1].ciudad : "";
+        maestro = bdMatch ? bdMatch[1] : {};
+      }
+      if (parsed.length === 0) {
+        // El modelo original no leyó filas: se toman todas del modelo nuevo
+        m2.filas.forEach(f => parsed.push({ material: f.sku, cantidad: f.cantidad || "", producto: f.producto,
+          precio: f.precio, descuentoPct: "", subtotalLinea: "", totalLinea: f.total }));
+      } else {
+        // Completar solo lo vacío: misma posición y mismo SKU; si no, el primer SKU igual sin usar
+        const usadas = new Set();
+        parsed.forEach((r, k) => {
+          let j = m2.filas[k] && normalizarSku(m2.filas[k].sku) === normalizarSku(r.material) && !usadas.has(k) ? k : -1;
+          if (j === -1) j = m2.filas.findIndex((f, x) => !usadas.has(x) && normalizarSku(f.sku) === normalizarSku(r.material));
+          if (j === -1) return;
+          usadas.add(j);
+          const f = m2.filas[j];
+          if (!(parseFloat(r.cantidad) > 0) && f.cantidad > 0) r.cantidad = f.cantidad;
+          if (!r.producto) r.producto = f.producto;
+          if (!r.precio) r.precio = f.precio;
+          if (!r.totalLinea) r.totalLinea = f.total;
+        });
+      }
+      // Destinatario y entrega (posiblemente nuevos) en todas las filas
+      parsed.forEach(r => {
+        const itemEan = r.ean ? null : eanDeSku(r.material);
+        Object.assign(r, {
+          entrega: entregaPdf, destinatario: destinatarioNit, nombre: destinatarioNombre,
+          direccion: maestro.direccion || "", lugar: destinatarioCiudad,
+          departamento: maestro.departamento || departamentoDeCiudad(destinatarioCiudad || maestro.ciudad),
+          telefono: maestro.telefono || r.telefono || "",
+          ean: r.ean || (itemEan ? itemEan.ean : ""), um: r.um || "BUL", item: r.item || "1001", bodega: r.bodega || "021",
+        });
+      });
+    }
+
     // ── Info adicional de cabecera del pedido (solo para TODA_LA_INFO) ──
     const getNext = (idx) => (idx !== -1 && lines[idx + 1]) ? lines[idx + 1].trim() : "";
     const fechaCreacionIdx = lines.findIndex(l => /^fecha de creaci[oó]n$/i.test(l));
     const fechaVencIdx     = lines.findIndex(l => /^fecha de vencimiento$/i.test(l));
-    const fechaCreacion    = getNext(fechaCreacionIdx);
-    const fechaVencimiento = getNext(fechaVencIdx);
+    const fechaCreacion    = getNext(fechaCreacionIdx) || (m2 ? m2.fechaEmision : "");
+    const fechaVencimiento = getNext(fechaVencIdx) || (m2 ? m2.fechaVencimiento : "");
 
-    let clienteCorreo = "", clienteTelefono = "";
+    let clienteCorreo = m2 ? m2.correoDestinatario : "", clienteTelefono = "";
     if (dirigidoIdx !== -1) {
       for (let k = dirigidoIdx + 2; k < Math.min(dirigidoIdx + 5, lines.length); k++) {
         if (!clienteCorreo && lines[k].includes("@")) clienteCorreo = lines[k];
@@ -353,7 +412,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     };
     const subtotalFactura  = findTotalVal("subtotal");
     const descuentoFactura = findTotalVal("descuento");
-    const totalFactura     = findTotalVal("total");
+    const totalFactura     = findTotalVal("total") || (m2 ? m2.totalFactura : "");
 
     // Teléfono: el del maestro manda; si no hay, el que trae el PDF
     if (clienteTelefono) parsed.forEach(r => { if (!r.telefono) r.telefono = clienteTelefono; });
@@ -362,15 +421,15 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       numeroPedido, entrega: entregaPdf, fechaCreacion, fechaVencimiento,
       clienteNombre: nombreDestinatario, clienteCorreo, clienteTelefono,
       generadoPorNombre, generadoPorCorreo,
-      subtotalFactura, descuentoFactura, totalFactura,
+      subtotalFactura, descuentoFactura, totalFactura, modelo,
     };
 
-    return { filas: parsed, numeroPedido, nombreDestinatario, bdMatch, pedidoHeader };
+    return { filas: parsed, numeroPedido, nombreDestinatario, bdMatch, pedidoHeader, modelo };
   };
 
   const processPdf = async (file) => {
     if (!file || file.type !== "application/pdf") { setError("Solo se aceptan archivos PDF."); return; }
-    setLoading(true); setError(""); setPdfRows([]); setFileName(file.name); setRowErrors({});
+    setLoading(true); setError(""); setPdfRows([]); setFileName(file.name); setRowErrors({}); setModeloLeido("");
     try {
       // Maestro Item/EAN para completar la columna EAN (si falla, el EAN se digita)
       try { await cargarItemsEan(); } catch (e) { if (showToast) showToast("⚠ " + e.message + ". El EAN deberá digitarse."); }
@@ -393,14 +452,15 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         const content = await page.getTextContent();
         for (const item of content.items) { const t = (item.str || "").trim(); if (t) fullText += t + "\n"; }
       }
-      const { filas, nombreDestinatario, bdMatch, pedidoHeader: header } = parsePdfText(fullText);
+      const { filas, nombreDestinatario, bdMatch, pedidoHeader: header, modelo } = parsePdfText(fullText);
+      setModeloLeido(modelo);
       if (filas.length === 0) { setError("Se leyó el PDF pero no se encontraron filas de productos."); setPedidoHeader(null); }
       else {
         setPdfRows(filas);
         setPedidoHeader(header);
         if (!bdMatch) {
-          setNoMaestro({ nombre: nombreDestinatario || "(el PDF no trae el nombre del destinatario)" });
-          setError(`⚠ "${nombreDestinatario || "Destinatario"}" no está en el maestro de destinatarios. NIT, nombre y ciudad quedan resaltados en amarillo para digitarlos o buscarlos con la lupa 🔍.`);
+          setNoMaestro({ nombre: nombreDestinatario || "", idx: 0 });
+          setError(`⚠ "${nombreDestinatario || "Destinatario"}" no se encontró en el maestro de clientes. Búsquelo primero con la lupa 🔍 del Nombre; si no existe, desde la misma búsqueda puede crearlo.`);
         } else setError("");
       }
     } catch (err) { setError("Error al procesar el PDF: " + err.message); }
@@ -555,7 +615,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
 
-  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); if (pdfInputRef.current) pdfInputRef.current.value = ""; };
+  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); if (pdfInputRef.current) pdfInputRef.current.value = ""; };
 
   // Columnas de la grilla (mismo orden de la plantilla). lupa: abre el buscador del maestro.
   const PREVIEW_COLS = [
@@ -579,6 +639,8 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     if (lupa.tipo === "destinatario") {
       const m = BD_CLIENTES[String(fila.nit).trim()] || fila;
       aplicarDestinatario(lupa.idx, datosMaestro(String(fila.nit).trim(), { ...fila, ...m, nombre: m.nombre || fila.nombre }));
+      // El destinatario ya quedó asignado: se quita el aviso de "no encontrado"
+      setError(prev => (prev.startsWith("⚠") && prev.includes("maestro de clientes") ? "" : prev));
     } else {
       updatePdfRow(lupa.idx, "material", fila.item);
       updatePdfRow(lupa.idx, "ean", fila.ean);
@@ -618,7 +680,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 3h7l4 4v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M10 3v5h5" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M6 10h6M6 13h4" stroke="#0F6E56" strokeWidth="1.2" strokeLinecap="round"/></svg>
           </div>
           {loading ? <div style={{ fontSize:13, color:"#0F6E56", fontWeight:500 }}>Leyendo PDF y buscando en BD…</div>
-            : fileName && pdfRows.length > 0 ? (<><div style={{ fontSize:13, fontWeight:600, color:"#1a2e27", marginBottom:2 }}>{fileName}</div><div style={{ fontSize:11, color:"#6B8F80" }}>{pdfRows.length} líneas generadas · haz clic para cambiar</div></>)
+            : fileName && pdfRows.length > 0 ? (<><div style={{ fontSize:13, fontWeight:600, color:"#1a2e27", marginBottom:2 }}>{fileName}</div><div style={{ fontSize:11, color:"#6B8F80" }}>{pdfRows.length} líneas generadas · haz clic para cambiar</div>{modeloLeido === NOMBRE_MODELO_NOVIEMBRE_2026 && <div title="El modelo original no leyó todos los datos: se completaron con la lectura del formato nuevo" style={{ display:"inline-block", marginTop:6, fontSize:11, fontWeight:600, color:"#1D4ED8", background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:20, padding:"2px 10px" }}>Leído con modelo_noviembre_2026</div>}</>)
             : (<><div style={{ fontSize:13, fontWeight:500, color:"#1a2e27", marginBottom:4 }}>Arrastra tu PDF de pedido aquí</div><div style={{ fontSize:11, color:"#6B8F80", marginBottom:12 }}>Lee el PDF · busca el cliente en BD · genera el Excel de despacho</div><div style={{ display:"inline-block", padding:"7px 18px", background:"#0F6E56", color:"#fff", borderRadius:8, fontSize:12, fontWeight:500 }}>Seleccionar PDF</div></>)}
         </div>
         {error && <div style={{ background: error.startsWith("⚠") ? "#FFFBEB" : "#FFF5F5", border: `1px solid ${error.startsWith("⚠") ? "#F6D860" : "#F5A0A0"}`, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color: error.startsWith("⚠") ? "#92600A" : "#C0392B", lineHeight:1.5 }}>{error}</div>}
@@ -686,22 +748,23 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       {lupa && <BuscadorMaestro tipo={lupa.tipo} inicial={lupa.inicial} onElegir={elegirDeLupa} onCerrar={() => setLupa(null)} />}
       {noMaestro && (
         <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:460, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
+          <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:480, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
             <div style={{ background:"#FFFBEB", borderBottom:"1px solid #FCD9A0", padding:"16px 22px", display:"flex", gap:12, alignItems:"center" }}>
               <div style={{ width:36, height:36, borderRadius:10, background:"#F59E0B", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:700, flexShrink:0 }}>!</div>
-              <div style={{ fontSize:15, fontWeight:700, color:"#92400E" }}>Destinatario no registrado en el maestro</div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#92400E" }}>Cliente no encontrado en el maestro</div>
             </div>
             <div style={{ padding:"16px 22px", fontSize:13, color:"#44574F", lineHeight:1.55 }}>
-              <div style={{ background:"#F7F9F8", border:"1px solid #E2EDE9", borderRadius:8, padding:"8px 12px", fontWeight:700, color:"#1a2e27", marginBottom:12 }}>{noMaestro.nombre}</div>
-              Este destinatario no existe en el maestro de destinatarios.
-              <ul style={{ margin:"8px 0 0", paddingLeft:18 }}>
-                <li>Solicite al <b>administrador del sistema</b> que actualice el maestro.</li>
-                <li>Reporte la novedad al <b>coordinador de L&amp;S</b> para ajustar el dato.</li>
-                <li>Mientras tanto, digite el NIT o búsquelo con la lupa 🔍 en las celdas en amarillo.</li>
-              </ul>
+              <div style={{ background:"#F7F9F8", border:"1px solid #E2EDE9", borderRadius:8, padding:"8px 12px", fontWeight:700, color:"#1a2e27", marginBottom:12 }}>{noMaestro.nombre || "(el PDF no trae el nombre del destinatario)"}</div>
+              <ol style={{ margin:0, paddingLeft:18 }}>
+                <li><b>Primero búsquelo</b> con la opción de búsqueda: escriba el nombre o parte de él. Se muestran también los nombres <b>parecidos</b> (tildes, S.A.S, errores de digitación).</li>
+                <li>Si aparece, <b>selecciónelo</b>. Si hay varios parecidos, elija el correcto.</li>
+                <li>Solo si no existe, use <b>«Crear cliente nuevo»</b> en la misma búsqueda. Quedará pendiente de revisión por el supervisor.</li>
+              </ol>
             </div>
-            <div style={{ padding:"0 22px 18px", textAlign:"right" }}>
-              <button onClick={() => setNoMaestro(null)} style={{ height:40, padding:"0 26px", borderRadius:10, background:"#0F6E56", color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }}>Cerrar</button>
+            <div style={{ padding:"0 22px 18px", display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={() => setNoMaestro(null)} style={{ height:40, padding:"0 18px", borderRadius:10, background:"#fff", color:"#6B8F80", border:"1px solid #E2EDE9", fontSize:13, fontWeight:600, cursor:"pointer" }}>Cerrar</button>
+              <button onClick={() => { setLupa({ tipo: "destinatario", idx: noMaestro.idx || 0, inicial: { nombre: noMaestro.nombre } }); setNoMaestro(null); }}
+                style={{ height:40, padding:"0 22px", borderRadius:10, background:"#0F6E56", color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }}>🔍 Buscar cliente</button>
             </div>
           </div>
         </div>
