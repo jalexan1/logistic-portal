@@ -116,7 +116,7 @@ function CrearCliente({ inicial, onCreado, onVolver }) {
   );
 }
 
-export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar, permitirCrear = true }) {
+export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar, permitirCrear = true, datosCrear = null }) {
   const cfg = CONFIG[tipo];
   const esCliente = tipo === "destinatario";
   const [filtros, setFiltros] = useState(() => Object.fromEntries(cfg.filtros.map(([k]) => [k, inicial[k] || ""])));
@@ -170,7 +170,9 @@ export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar
         </div>
 
         {creando ? (
-          <CrearCliente inicial={{ nit: filtros.nit || "", nombre: filtros.nombre || "", ciudad: filtros.ciudad || "", departamento: departamentoDeCiudad(filtros.ciudad) }}
+          <CrearCliente inicial={{ nit: filtros.nit || "", nombre: filtros.nombre || "", ciudad: filtros.ciudad || "", departamento: departamentoDeCiudad(filtros.ciudad),
+              // Datos que ya trae el pedido (ej. plantilla Excel): el formulario queda prellenado
+              ...Object.fromEntries(Object.entries(datosCrear || {}).filter(([, v]) => String(v || "").trim())) }}
             onVolver={() => setCreando(false)}
             onCreado={(c) => elegir(c)} />
         ) : (

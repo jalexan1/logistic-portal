@@ -3,7 +3,8 @@ import * as XLSX from "xlsx";
 import { BD_CLIENTES, buscarPorNombre, buscarNombreExacto } from "../services/clientesService";
 import { radicarSolicitud, nuevaLlave, obtenerLineas } from "../services/solicitudesService";
 import { cargarItemsEan, eanDeSku, cargarCiudades, departamentoDeCiudad } from "../services/maestrosService";
-import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
+import { normalizarLinea, descargarExcelPlantilla } from "../services/excelDespachoService";
+import { leerPlantillaPedido, compararConMaestro, resolverNit, URL_PLANTILLA } from "../services/plantillaPedidoExcel";
 import BuscadorMaestro from "./BuscadorMaestro";
 import { leerModeloNoviembre2026, normalizarSku, NOMBRE_MODELO_NOVIEMBRE_2026 } from "../services/pdfModeloNoviembre2026";
 import { fechaHoraBogota } from "../utils/fechas";
@@ -17,6 +18,14 @@ const generateFecha = () => {
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 const up = v => typeof v === "string" ? v.toUpperCase() : v;
+
+// ── Listas del encabezado (fase 6) ──
+// valor = lo que se guarda en la base · etiqueta = lo que ve el usuario
+const AREAS = [{ valor: "COMPRAS", etiqueta: "Compras" }, { valor: "LOGISTICA", etiqueta: "Logística" }];
+const PROCESOS = [{ valor: "RAPPI", etiqueta: "Rappi" }, { valor: "MP", etiqueta: "MP" }, { valor: "VARIOS", etiqueta: "Varios" }];
+const sinTildes = v => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+const areaDeLista = v => AREAS.find(a => a.valor === sinTildes(v))?.valor || "";
+const FLECHA_SELECT = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%230F6E56' stroke-width='1.6' fill='none'/%3E%3C/svg%3E\") no-repeat right 10px center";
 
 // ── Definición de columnas ──
 const COLS = [
@@ -40,7 +49,9 @@ const EMPTY_ROW = () => ({
   material:"", cantidad:"", um:"BUL", item:"1001", bodega:"021",
 });
 
-// ── Descarga de los 3 archivos (despacho_, CARGA A WMS_, CARGA LIBRO 1_) ──
+// ── Descarga del Excel con el formato de la plantilla (fase 6) ──
+// En la pantalla Despachos el solicitante descarga UN solo archivo
+// (pedido_<ÁREA>_<N°>.xlsx) con las 10 columnas de Plantilla_Pedido.xlsx.
 // Se arman con las líneas GUARDADAS en la base (que ya trae EAN, dirección,
 // departamento y teléfono completados desde los maestros). Si la consulta
 // falla, se arman con lo que hay en pantalla para no dejar al usuario sin archivo.
@@ -52,7 +63,7 @@ async function descargarDespacho({ id, numero, area, solicitante, correo, radica
     lineas = guardadas.length ? guardadas.map(l => normalizarLinea(l, enc)) : null;
   } catch { lineas = null; }
   if (!lineas) lineas = filasLocales.map(r => normalizarLinea(r, enc));
-  return descargarArchivosDespacho({ area, numero, lineas });
+  return descargarExcelPlantilla({ area, numero, lineas });
 }
 
 // ── Popup de confirmación ──
@@ -84,7 +95,7 @@ function SuccessPopup({ visible, meta, onClose, onNewRequest }) {
         </div>
         <div style={{ padding:"20px 28px 6px" }}>
           {[
-            { label:"Área solicitante", value: meta.area      || "—" },
+            { label:"Área · Proceso",   value: [meta.area, meta.proceso].filter(Boolean).join(" · ") || "—" },
             { label:"Fecha",            value: meta.fecha             },
             { label:"N° Solicitud",     value: meta.solicitud         },
             { label:"Solicitante",      value: meta.solicitante || "—" },
@@ -96,7 +107,7 @@ function SuccessPopup({ visible, meta, onClose, onNewRequest }) {
           ))}
         </div>
         <div style={{ padding:"16px 28px 22px", textAlign:"center" }}>
-          <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>Se descargaron: despacho_, CARGA A WMS_ y CARGA LIBRO 1_</div>
+          <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>Se descargó el Excel del pedido (formato de la plantilla)</div>
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={onNewRequest} style={{ flex:1, height:44, borderRadius:10, background:"#F2F8F5", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:13, fontWeight:600, cursor:"pointer" }}
               onMouseEnter={e => e.currentTarget.style.background = "#E1F5EE"}
@@ -235,7 +246,12 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const [pedidoHeader, setPedidoHeader] = useState(null);
   const [enviandoPdf, setEnviandoPdf] = useState(false);
   const [lupa, setLupa] = useState(null);            // { tipo: 'destinatario'|'item', idx, inicial }
-  const [noMaestro, setNoMaestro] = useState(null);  // destinatario del PDF que no está en el maestro
+  const [noMaestro, setNoMaestro] = useState(null);  // { items: [{ idx, nombre, nit, datos }] } clientes no encontrados
+  const [inconsist, setInconsist] = useState(null);  // { grupos: [...] } datos de la plantilla distintos al maestro
+  const [origenCarga, setOrigenCarga] = useState("PDF"); // PDF | EXCEL
+  const [cargandoExcel, setCargandoExcel] = useState(false);
+  const [dragExcel, setDragExcel] = useState(false);
+  const excelInputRef = useRef(null);
   const [modeloLeido, setModeloLeido] = useState(""); // modelo de lectura usado (original / modelo_noviembre_2026)
   const valorAlEntrar = useRef("");                  // valor de la celda al entrar (para saber si cambió)
   const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
@@ -429,7 +445,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
 
   const processPdf = async (file) => {
     if (!file || file.type !== "application/pdf") { setError("Solo se aceptan archivos PDF."); return; }
-    setLoading(true); setError(""); setPdfRows([]); setFileName(file.name); setRowErrors({}); setModeloLeido("");
+    setLoading(true); setError(""); setPdfRows([]); setFileName(file.name); setRowErrors({}); setModeloLeido(""); setOrigenCarga("PDF"); setInconsist(null);
     try {
       // Maestro Item/EAN para completar la columna EAN (si falla, el EAN se digita)
       try { await cargarItemsEan(); } catch (e) { if (showToast) showToast("⚠ " + e.message + ". El EAN deberá digitarse."); }
@@ -459,7 +475,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         setPdfRows(filas);
         setPedidoHeader(header);
         if (!bdMatch) {
-          setNoMaestro({ nombre: nombreDestinatario || "", idx: 0 });
+          setNoMaestro({ items: [{ idx: 0, nombre: nombreDestinatario || "", nit: "", datos: null }] });
           setError(`⚠ "${nombreDestinatario || "Destinatario"}" no se encontró en el maestro de clientes. Búsquelo primero con la lupa 🔍 del Nombre; si no existe, desde la misma búsqueda puede crearlo.`);
         } else setError("");
       }
@@ -468,6 +484,64 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   };
 
   const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file) processPdf(file); };
+
+  // ── Pedido con plantilla Excel ─────────────────────────────────────────
+  // Misma lógica del PDF: grilla, lupas, EAN desde el maestro, celdas amarillas.
+  // Cliente: si el NIT no existe → aviso + lupa + crear cliente (prellenado).
+  //          si existe pero los datos difieren → aviso de información
+  //          inconsistente: continuar con lo del Excel o validar con la lupa.
+  const processExcel = async (file) => {
+    if (!file || !/\.xlsx?$/i.test(file.name)) { setError("Solo se aceptan archivos Excel (.xlsx) con la plantilla del pedido."); return; }
+    setCargandoExcel(true); setError(""); setPdfRows([]); setFileName(file.name); setRowErrors({});
+    setModeloLeido(""); setOrigenCarga("EXCEL"); setNoMaestro(null); setInconsist(null); setPedidoHeader(null);
+    llavePdfRef.current = null; setSolicitudYaGenerada(false);
+    try {
+      try { await cargarItemsEan(); } catch (e) { if (showToast) showToast("⚠ " + e.message + ". El EAN deberá digitarse."); }
+      try { await cargarCiudades(); } catch { /* el departamento se digita */ }
+      const { filas: leidas } = leerPlantillaPedido(await file.arrayBuffer());
+      const filas = leidas.map(r => {
+        const nit = resolverNit(BD_CLIENTES, r.destinatario) || r.destinatario;
+        const m = BD_CLIENTES[nit] || {};
+        const it = eanDeSku(r.material);
+        return {
+          ...r, destinatario: nit,
+          // Lo que trae la plantilla manda; lo vacío se completa con el maestro
+          nombre: r.nombre || m.nombre || "", direccion: r.direccion || m.direccion || "",
+          telefono: r.telefono || m.telefono || "", lugar: r.lugar || m.ciudad || "",
+          departamento: r.departamento || m.departamento || departamentoDeCiudad(r.lugar || m.ciudad),
+          ean: it ? it.ean : "", um: "BUL", item: "1001", bodega: "021",
+        };
+      });
+      setPdfRows(filas);
+      setPedidoHeader({ origen: "EXCEL", archivo: file.name, lineas: filas.length });
+      const { noEncontrados, inconsistentes } = compararConMaestro(filas, BD_CLIENTES);
+      if (noEncontrados.length) {
+        const n = {};
+        noEncontrados.forEach(g => filas.forEach((r, i) => { if (r.entrega === g.entrega && r.destinatario === g.nit) n[`${i}-destinatario`] = true; }));
+        setRowErrors(n);
+        setNoMaestro({ items: noEncontrados });
+        setError(`⚠ ${noEncontrados.length} cliente${noEncontrados.length > 1 ? "s" : ""} de la plantilla no se encontr${noEncontrados.length > 1 ? "aron" : "ó"} en el maestro de clientes. Búsquelo${noEncontrados.length > 1 ? "s" : ""} primero con la lupa 🔍; si no existe, desde la misma búsqueda puede crearlo.`);
+      } else if (inconsistentes.length) setInconsist({ grupos: inconsistentes });
+      if (showToast) showToast(`✓ Plantilla leída: ${filas.length} línea${filas.length !== 1 ? "s" : ""}`);
+    } catch (err) { setError("No se pudo leer la plantilla: " + err.message); }
+    finally { setCargandoExcel(false); if (excelInputRef.current) excelInputRef.current.value = ""; }
+  };
+  const handleDropExcel = (e) => { e.preventDefault(); setDragExcel(false); const file = e.dataTransfer.files[0]; if (file) processExcel(file); };
+
+  // Entregas de la plantilla con datos distintos al maestro que aún no se aceptaron
+  const inconsistenciasPendientes = () => origenCarga !== "EXCEL" ? []
+    : compararConMaestro(pdfRows, BD_CLIENTES).inconsistentes.filter(g => !pdfRows[g.idx]?.inconsistenciaAceptada);
+  const aceptarInconsistencias = () => {
+    const grupos = inconsistenciasPendientes();
+    const claves = new Set(grupos.map(g => `${g.entrega}¦${g.nit}`));
+    setPdfRows(prev => prev.map(r => claves.has(`${r.entrega}¦${r.destinatario}`) ? { ...r, inconsistenciaAceptada: true } : r));
+    setRowErrors(prev => { const n = { ...prev }; pdfRows.forEach((r, i) => { if (claves.has(`${r.entrega}¦${r.destinatario}`)) delete n[`${i}-nombre`]; }); return n; });
+    // Queda constancia en la solicitud (datos de origen) de que se radicó con información inconsistente
+    setPedidoHeader(h => ({ ...(h || {}), inconsistenciasAceptadas: [...((h && h.inconsistenciasAceptadas) || []),
+      ...grupos.map(g => ({ entrega: g.entrega, nit: g.nit, diferencias: g.diferencias }))] }));
+    setInconsist(null);
+    if (showToast) showToast("Se continuará con los datos del Excel (información inconsistente aceptada).");
+  };
   const updatePdfRow = (idx, key, val) => setPdfRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: val } : r));
   const marcar = (idx, key, on) => setRowErrors(prev => { const n = { ...prev }; if (on) n[`${idx}-${key}`] = true; else delete n[`${idx}-${key}`]; return n; });
 
@@ -536,20 +610,31 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     if (solicitudYaGenerada) { if (showToast) showToast(`⚠ Solicitud ya radicada con: ${fileName}`); setPdfPopup(true); return; }
     const metaErrs = {};
     if (!meta.area.trim()) metaErrs["pdf-area"] = true;
+    if (!meta.proceso) metaErrs["pdf-proceso"] = true;
     if (!meta.solicitante.trim()) metaErrs["pdf-solicitante"] = true;
     const correoTrimmed = meta.correo ? meta.correo.trim() : "";
     if (!correoTrimmed || !correoTrimmed.includes("@")) metaErrs["pdf-correo"] = true;
     const rErrs = {};
     pdfRows.forEach((r, idx) => {
       OBLIGATORIOS.forEach(k => { if (faltaEn(r, k)) rErrs[`${idx}-${k}`] = true; });
-      // NIT y nombre deben estar alineados con el maestro
       const m = BD_CLIENTES[String(r.destinatario || "").trim()];
-      if (m && String(m.nombre).trim().toUpperCase() !== String(r.nombre || "").trim().toUpperCase()) rErrs[`${idx}-nombre`] = true;
+      // Plantilla Excel: el cliente debe existir en el maestro (o crearse con la lupa)
+      if (origenCarga === "EXCEL" && r.destinatario && !m) rErrs[`${idx}-destinatario`] = true;
+      // NIT y nombre deben estar alineados con el maestro (salvo inconsistencia aceptada)
+      if (m && !r.inconsistenciaAceptada && String(m.nombre).trim().toUpperCase() !== String(r.nombre || "").trim().toUpperCase()) rErrs[`${idx}-nombre`] = true;
     });
+    // Plantilla Excel con datos distintos al maestro sin decidir → mostrar el aviso
+    const pendientesInc = inconsistenciasPendientes();
+    if (pendientesInc.length && Object.keys(metaErrs).length === 0) {
+      setInconsist({ grupos: pendientesInc });
+      if (showToast) showToast("⚠ Hay información inconsistente con el maestro: decida si continúa con los datos del Excel o los valida con la lupa.");
+      return;
+    }
     if (Object.keys(metaErrs).length > 0 || Object.keys(rErrs).length > 0) {
       setRowErrors(rErrs);
       const msgs = [];
-      if (metaErrs["pdf-area"]) msgs.push("Área solicitante");
+      if (metaErrs["pdf-area"]) msgs.push("Área solicitante (arriba)");
+      if (metaErrs["pdf-proceso"]) msgs.push("Proceso (arriba)");
       if (metaErrs["pdf-solicitante"]) msgs.push("Solicitante");
       if (metaErrs["pdf-correo"]) msgs.push("Correo electrónico");
       const filasFaltantes = [...new Set(Object.keys(rErrs).map(k => `Fila ${parseInt(k)+1}`))];
@@ -564,7 +649,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     let radicada;
     try {
       radicada = await radicarSolicitud({
-        llave: llavePdfRef.current, meta, filas: pdfRows, origen: "PDF",
+        llave: llavePdfRef.current, meta, filas: pdfRows, origen: origenCarga,
         pedidoHeader, archivo: fileName || null,
       });
     } catch (ex) {
@@ -576,46 +661,18 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     // ── 2) Excel con el número oficial devuelto por la base
     const solicitudFinal = radicada.numero;
     const fechaFinal = fechaHoraBogota(radicada.radicadaAt);
-    const metaFinal = { solicitud: solicitudFinal, fecha: fechaFinal, area: meta.area, solicitante: meta.solicitante, esReintento: radicada.esReintento };
+    const metaFinal = { solicitud: solicitudFinal, fecha: fechaFinal, area: meta.area, proceso: meta.proceso, solicitante: meta.solicitante, esReintento: radicada.esReintento };
     setPdfMeta(metaFinal);
     if (onRadicada) onRadicada();   // refresca la tabla de solicitudes del día
-    const baseName = `despacho_${(meta.area||"pdf").replace(/\s+/g,"_")}_${solicitudFinal}`;
 
-    // ── Archivos 1-3: despacho_, CARGA A WMS_ y CARGA LIBRO 1_ (con lo guardado en la base)
+    // ── Un solo Excel con el formato de la plantilla (con lo guardado en la base)
     await descargarDespacho({ id: radicada.id, numero: solicitudFinal, area: meta.area, solicitante: meta.solicitante,
       correo: meta.correo, radicadaAt: radicada.radicadaAt, filasLocales: pdfRows });
-
-    // ── Archivo 2: TODA_LA_INFO — informativo, no se usa en ningún proceso ──
-    const h = pedidoHeader || {};
-    const infoWb = XLSX.utils.book_new();
-    const infoAoa = [
-      ["INFORMACIÓN DEL PEDIDO"],
-      ["N° Pedido", h.numeroPedido || ""],
-      ["Fecha de creación", h.fechaCreacion || ""],
-      ["Fecha de vencimiento", h.fechaVencimiento || ""],
-      ["Cliente", h.clienteNombre || ""],
-      ["Correo cliente", h.clienteCorreo || ""],
-      ["Teléfono cliente", h.clienteTelefono || ""],
-      ["Generado por", h.generadoPorNombre || ""],
-      ["Correo generador", h.generadoPorCorreo || ""],
-      ["Subtotal factura", h.subtotalFactura || ""],
-      ["Descuento factura", h.descuentoFactura || ""],
-      ["Total factura", h.totalFactura || ""],
-      [],
-      ["DETALLE DE PRODUCTOS"],
-      ["SKU", "EAN", "Producto", "Cantidad", "Precio unitario", "% Descuento", "Sub Total", "Total", "Entrega", "NIT destinatario", "Nombre destinatario", "Dirección", "Ciudad", "Departamento", "Ítem", "Bodega"],
-      ...pdfRows.map(r => [r.material, r.ean||"", r.producto||"", parseFloat(r.cantidad)||0, r.precio||"", r.descuentoPct||"", r.subtotalLinea||"", r.totalLinea||"", r.entrega, r.destinatario, r.nombre, r.direccion||"", r.lugar, r.departamento||"", r.item, r.bodega]),
-    ];
-    const infoWs = XLSX.utils.aoa_to_sheet(infoAoa);
-    infoWs["!cols"] = [{wch:16},{wch:16},{wch:34},{wch:10},{wch:16},{wch:12},{wch:16},{wch:16},{wch:16},{wch:16},{wch:28},{wch:24},{wch:16},{wch:16},{wch:8},{wch:8}];
-    XLSX.utils.book_append_sheet(infoWb, infoWs, "Toda la info");
-    // Pequeño delay para que el navegador no bloquee la descarga automática
-    setTimeout(() => XLSX.writeFile(infoWb, `${baseName}_TODA_LA_INFO.xlsx`), 400);
 
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
 
-  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); if (pdfInputRef.current) pdfInputRef.current.value = ""; };
+  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); setNoMaestro(null); setInconsist(null); setOrigenCarga("PDF"); if (pdfInputRef.current) pdfInputRef.current.value = ""; if (excelInputRef.current) excelInputRef.current.value = ""; };
 
   // Columnas de la grilla (mismo orden de la plantilla). lupa: abre el buscador del maestro.
   const PREVIEW_COLS = [
@@ -625,12 +682,14 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     { key:"direccion",    label:"Dirección",     w:"170px" },
     { key:"lugar",        label:"Ciudad",        w:"110px" },
     { key:"departamento", label:"Departamento",  w:"110px" },
+    { key:"telefono",     label:"Teléfono",      w:"110px" },
     { key:"material",     label:"SKU",           w:"128px", lupa:"item" },
     { key:"ean",          label:"EAN",           w:"138px", lupa:"item" },
     { key:"cantidad",     label:"Cantidad",      w:"78px", numeric:true },
     { key:"um",           label:"UM",            w:"56px" },
     { key:"item",         label:"Ítem",          w:"62px" },
     { key:"bodega",       label:"Bodega",        w:"64px" },
+    { key:"observaciones", label:"Observaciones", w:"220px", libre:true },
   ];
   const totalPendientes = pdfRows.reduce((a, r, i) => a + PREVIEW_COLS.filter(c => faltaEn(r, c.key) || rowErrors[`${i}-${c.key}`]).length, 0);
 
@@ -652,15 +711,15 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   return (
     <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #F59E0B", boxShadow:"0 0 0 3px rgba(245,158,11,0.12)", overflow:"hidden", marginTop:20 }}>
       {/* Encabezado resaltado: siempre visible aunque la sección esté oculta */}
-      <div onClick={alternar} title={abierto ? "Ocultar Excel desde PDF" : "Mostrar Excel desde PDF"}
+      <div onClick={alternar} title={abierto ? "Ocultar Carga de pedidos" : "Mostrar Carga de pedidos"}
         style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 16px", background:"#FFFBEB", borderBottom: abierto ? "1px solid #FCD9A0" : "none", cursor:"pointer" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:0 }}>
           <div style={{ width:30, height:30, borderRadius:8, background:"#F59E0B", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M4 2h6l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="#fff" strokeWidth="1.4" strokeLinejoin="round"/><path d="M10 2v4h4" stroke="#fff" strokeWidth="1.4" strokeLinejoin="round"/></svg>
           </div>
           <div style={{ minWidth:0 }}>
-            <div style={{ fontSize:13, fontWeight:700, color:"#92400E" }}>Excel desde PDF</div>
-            {!isMobileLocal && <div style={{ fontSize:11, color:"#B45309" }}>Cargue el PDF del pedido y radique la solicitud sin digitar las líneas</div>}
+            <div style={{ fontSize:13, fontWeight:700, color:"#92400E" }}>Carga de pedidos</div>
+            {!isMobileLocal && <div style={{ fontSize:11, color:"#B45309" }}>Cargue el pedido con la plantilla Excel o desde el PDF y radique la solicitud sin digitar las líneas</div>}
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
@@ -673,19 +732,49 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         </div>
       </div>
       <div style={{ padding: isMobileLocal ? "14px 12px" : "16px 20px", display: abierto ? "block" : "none" }}>
-        <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop} onClick={() => pdfInputRef.current?.click()}
-          style={{ border:`1.5px dashed ${dragOver ? "#0F6E56" : "#C5DDD4"}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background: dragOver ? "#F0FBF6" : "#F7FCF9", cursor:"pointer", marginBottom:14, transition:"border-color 0.2s, background 0.2s" }}>
-          <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={(e) => { if (e.target.files[0]) processPdf(e.target.files[0]); }} />
-          <div style={{ width:36, height:36, background:"#E1F5EE", borderRadius:8, margin:"0 auto 10px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 3h7l4 4v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M10 3v5h5" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M6 10h6M6 13h4" stroke="#0F6E56" strokeWidth="1.2" strokeLinecap="round"/></svg>
+        <div style={{ display:"grid", gridTemplateColumns: isMobileLocal ? "1fr" : "1fr 1fr", gap:16, marginBottom:14 }}>
+          {/* Pedido con plantilla Excel */}
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:"#1a2e27" }}>📊 Pedido con plantilla Excel</div>
+              <a href={URL_PLANTILLA} download="Plantilla_Pedido.xlsx" onClick={e => e.stopPropagation()}
+                style={{ display:"inline-flex", alignItems:"center", gap:6, height:30, padding:"0 12px", fontSize:12, fontWeight:600, border:"1px solid #C5DDD4", borderRadius:8, background:"#fff", color:"#0F6E56", textDecoration:"none", whiteSpace:"nowrap" }}>⬇ Descargar plantilla</a>
+            </div>
+            <div onDragOver={(e) => { e.preventDefault(); setDragExcel(true); }} onDragLeave={() => setDragExcel(false)} onDrop={handleDropExcel} onClick={() => excelInputRef.current?.click()}
+              style={{ flex:1, border:`1.5px dashed ${dragExcel ? "#0F6E56" : "#C5DDD4"}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background: dragExcel ? "#F0FBF6" : "#F7FCF9", cursor:"pointer", transition:"border-color 0.2s, background 0.2s" }}>
+              <input ref={excelInputRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display:"none" }} onChange={(e) => { if (e.target.files[0]) processExcel(e.target.files[0]); }} />
+              <div style={{ width:36, height:36, background:"#E1F5EE", borderRadius:8, margin:"0 auto 10px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2.5" y="2.5" width="13" height="13" rx="1.5" stroke="#0F6E56" strokeWidth="1.3"/><path d="M2.5 7h13M2.5 11h13M7 2.5v13" stroke="#0F6E56" strokeWidth="1.2"/></svg>
+              </div>
+              {cargandoExcel ? <div style={{ fontSize:13, color:"#0F6E56", fontWeight:500 }}>Leyendo la plantilla y buscando en el maestro…</div>
+                : origenCarga === "EXCEL" && fileName && pdfRows.length > 0 ? (<><div style={{ fontSize:13, fontWeight:600, color:"#1a2e27", marginBottom:2 }}>{fileName}</div><div style={{ fontSize:11, color:"#6B8F80" }}>{pdfRows.length} líneas cargadas · haga clic para cambiar</div></>)
+                : (<><div style={{ fontSize:13, fontWeight:500, color:"#1a2e27", marginBottom:4 }}>Arrastre aquí la plantilla diligenciada</div><div style={{ fontSize:11, color:"#6B8F80", marginBottom:12 }}>Plantilla_Pedido.xlsx · valida el cliente con el maestro · arma las líneas</div><div style={{ display:"inline-block", padding:"7px 18px", background:"#0F6E56", color:"#fff", borderRadius:8, fontSize:12, fontWeight:500 }}>Seleccionar Excel</div></>)}
+            </div>
           </div>
-          {loading ? <div style={{ fontSize:13, color:"#0F6E56", fontWeight:500 }}>Leyendo PDF y buscando en BD…</div>
-            : fileName && pdfRows.length > 0 ? (<><div style={{ fontSize:13, fontWeight:600, color:"#1a2e27", marginBottom:2 }}>{fileName}</div><div style={{ fontSize:11, color:"#6B8F80" }}>{pdfRows.length} líneas generadas · haz clic para cambiar</div>{modeloLeido === NOMBRE_MODELO_NOVIEMBRE_2026 && <div title="El modelo original no leyó todos los datos: se completaron con la lectura del formato nuevo" style={{ display:"inline-block", marginTop:6, fontSize:11, fontWeight:600, color:"#1D4ED8", background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:20, padding:"2px 10px" }}>Leído con modelo_noviembre_2026</div>}</>)
-            : (<><div style={{ fontSize:13, fontWeight:500, color:"#1a2e27", marginBottom:4 }}>Arrastra tu PDF de pedido aquí</div><div style={{ fontSize:11, color:"#6B8F80", marginBottom:12 }}>Lee el PDF · busca el cliente en BD · genera el Excel de despacho</div><div style={{ display:"inline-block", padding:"7px 18px", background:"#0F6E56", color:"#fff", borderRadius:8, fontSize:12, fontWeight:500 }}>Seleccionar PDF</div></>)}
+          {/* Pedido desde PDF */}
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ display:"flex", alignItems:"center", height:30 }}><div style={{ fontSize:12, fontWeight:700, color:"#1a2e27" }}>📄 Pedido desde PDF</div></div>
+            <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop} onClick={() => pdfInputRef.current?.click()}
+              style={{ border:`1.5px dashed ${dragOver ? "#0F6E56" : "#C5DDD4"}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background: dragOver ? "#F0FBF6" : "#F7FCF9", cursor:"pointer", height:"100%", boxSizing:"border-box", transition:"border-color 0.2s, background 0.2s" }}>
+              <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={(e) => { if (e.target.files[0]) processPdf(e.target.files[0]); }} />
+              <div style={{ width:36, height:36, background:"#E1F5EE", borderRadius:8, margin:"0 auto 10px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 3h7l4 4v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M10 3v5h5" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M6 10h6M6 13h4" stroke="#0F6E56" strokeWidth="1.2" strokeLinecap="round"/></svg>
+              </div>
+              {loading ? <div style={{ fontSize:13, color:"#0F6E56", fontWeight:500 }}>Leyendo PDF y buscando en BD…</div>
+                : origenCarga === "PDF" && fileName && pdfRows.length > 0 ? (<><div style={{ fontSize:13, fontWeight:600, color:"#1a2e27", marginBottom:2 }}>{fileName}</div><div style={{ fontSize:11, color:"#6B8F80" }}>{pdfRows.length} líneas generadas · haz clic para cambiar</div>{modeloLeido === NOMBRE_MODELO_NOVIEMBRE_2026 && <div title="El modelo original no leyó todos los datos: se completaron con la lectura del formato nuevo" style={{ display:"inline-block", marginTop:6, fontSize:11, fontWeight:600, color:"#1D4ED8", background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:20, padding:"2px 10px" }}>Leído con modelo_noviembre_2026</div>}</>)
+                : (<><div style={{ fontSize:13, fontWeight:500, color:"#1a2e27", marginBottom:4 }}>Arrastre aquí el PDF del pedido</div><div style={{ fontSize:11, color:"#6B8F80", marginBottom:12 }}>Lee el PDF · busca el cliente en el maestro · arma las líneas</div><div style={{ display:"inline-block", padding:"7px 18px", background:"#0F6E56", color:"#fff", borderRadius:8, fontSize:12, fontWeight:500 }}>Seleccionar PDF</div></>)}
+            </div>
+          </div>
         </div>
         {error && <div style={{ background: error.startsWith("⚠") ? "#FFFBEB" : "#FFF5F5", border: `1px solid ${error.startsWith("⚠") ? "#F6D860" : "#F5A0A0"}`, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color: error.startsWith("⚠") ? "#92600A" : "#C0392B", lineHeight:1.5 }}>{error}</div>}
         {pdfRows.length > 0 && (
           <>
+            {origenCarga === "EXCEL" && !inconsist && inconsistenciasPendientes().length > 0 && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, background:"#FFF7ED", border:"1px solid #FDBA74", borderRadius:10, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#9A3412" }}>
+                <span><b>{inconsistenciasPendientes().length} entrega{inconsistenciasPendientes().length !== 1 ? "s" : ""} con información inconsistente</b> con el maestro de clientes. Decida antes de radicar.</span>
+                <button onClick={() => setInconsist({ grupos: inconsistenciasPendientes() })} style={{ height:30, padding:"0 12px", borderRadius:8, background:"#EA580C", color:"#fff", border:"none", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>Revisar</button>
+              </div>
+            )}
             {totalPendientes > 0 && (
               <div style={{ display:"flex", alignItems:"center", gap:8, background:"#FFF7D6", border:"1px solid #F2C94C", borderRadius:10, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#7A5A00" }}>
                 <span style={{ width:14, height:14, borderRadius:4, background:"#FFE58A", border:"1px solid #E5B935", flexShrink:0 }} />
@@ -693,7 +782,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
               </div>
             )}
             <div style={{ overflow:"auto", maxHeight:"62vh", marginBottom:14, borderRadius:8, border:"1px solid #E2EDE9" }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1480, fontSize:12 }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1820, fontSize:12 }}>
                 <thead style={{ position:"sticky", top:0, zIndex:2 }}><tr style={{ background:"#F2F8F5" }}>
                   <th style={{ width:32, padding:"8px 6px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:"center", borderBottom:"1px solid #E2EDE9" }}>#</th>
                   {PREVIEW_COLS.map(c => <th key={c.key} style={{ width:c.w, padding:"8px 8px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:c.numeric?"right":"left", borderBottom:"1px solid #E2EDE9", whiteSpace:"nowrap" }}>
@@ -711,7 +800,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
                       <td key={c.key} style={{ padding:"3px" }}>
                         <div style={{ position:"relative" }}>
                           <input type={c.numeric ? "number" : "text"} value={r[c.key] ?? ""} title={amarillo ? "Dato obligatorio: digítelo o búsquelo con la lupa" : ""}
-                            onChange={e => updatePdfRow(idx, c.key, c.key === "cantidad" ? e.target.value : e.target.value.toUpperCase())}
+                            onChange={e => updatePdfRow(idx, c.key, c.key === "cantidad" || c.libre ? e.target.value : e.target.value.toUpperCase())}
                             style={{ width:"100%", height:30, padding: c.lupa ? "0 26px 0 7px" : "0 7px", fontSize:12, border: borde, borderRadius:6, background: fondo, color:"#1a2e27", outline:"none", textAlign:c.numeric?"right":"left", boxSizing:"border-box" }}
                             onFocus={e => { valorAlEntrar.current = String(r[c.key] ?? "").trim(); e.target.style.background = amarillo ? "#FFF3BF" : "#F2F8F5"; e.target.style.border = "1px solid #0F6E56"; }}
                             onBlur={e => {
@@ -745,26 +834,77 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
           </>
         )}
       </div>
-      {lupa && <BuscadorMaestro tipo={lupa.tipo} inicial={lupa.inicial} onElegir={elegirDeLupa} onCerrar={() => setLupa(null)} />}
+      {lupa && <BuscadorMaestro tipo={lupa.tipo} inicial={lupa.inicial} datosCrear={lupa.datosCrear} onElegir={elegirDeLupa} onCerrar={() => setLupa(null)} />}
       {noMaestro && (
         <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:480, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
+          <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:540, maxHeight:"88vh", overflow:"auto", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
             <div style={{ background:"#FFFBEB", borderBottom:"1px solid #FCD9A0", padding:"16px 22px", display:"flex", gap:12, alignItems:"center" }}>
               <div style={{ width:36, height:36, borderRadius:10, background:"#F59E0B", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:700, flexShrink:0 }}>!</div>
-              <div style={{ fontSize:15, fontWeight:700, color:"#92400E" }}>Cliente no encontrado en el maestro</div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#92400E" }}>{noMaestro.items.length > 1 ? `${noMaestro.items.length} clientes no encontrados en el maestro` : "Cliente no encontrado en el maestro"}</div>
             </div>
             <div style={{ padding:"16px 22px", fontSize:13, color:"#44574F", lineHeight:1.55 }}>
-              <div style={{ background:"#F7F9F8", border:"1px solid #E2EDE9", borderRadius:8, padding:"8px 12px", fontWeight:700, color:"#1a2e27", marginBottom:12 }}>{noMaestro.nombre || "(el PDF no trae el nombre del destinatario)"}</div>
-              <ol style={{ margin:0, paddingLeft:18 }}>
-                <li><b>Primero búsquelo</b> con la opción de búsqueda: escriba el nombre o parte de él. Se muestran también los nombres <b>parecidos</b> (tildes, S.A.S, errores de digitación).</li>
+              <ol style={{ margin:"0 0 12px", paddingLeft:18 }}>
+                <li><b>Primero búsquelo</b> con la lupa: se muestran también los nombres <b>parecidos</b> (tildes, S.A.S, errores de digitación).</li>
                 <li>Si aparece, <b>selecciónelo</b>. Si hay varios parecidos, elija el correcto.</li>
-                <li>Solo si no existe, use <b>«Crear cliente nuevo»</b> en la misma búsqueda. Quedará pendiente de revisión por el supervisor.</li>
+                <li>Solo si no existe, use <b>«Crear cliente nuevo»</b> en la misma búsqueda{origenCarga === "EXCEL" ? " (quedará prellenado con los datos de la plantilla)" : ""}. Quedará pendiente de revisión por el supervisor.</li>
               </ol>
+              {noMaestro.items.map(it => (
+                <div key={it.idx} style={{ display:"flex", alignItems:"center", gap:10, background:"#F7F9F8", border:"1px solid #E2EDE9", borderRadius:8, padding:"8px 12px", marginBottom:6 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:700, color:"#1a2e27", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{it.nombre || "(sin nombre)"}</div>
+                    <div style={{ fontSize:11, color:"#6B8F80" }}>{[it.entrega && `Entrega ${it.entrega}`, it.nit && `NIT ${it.nit}`].filter(Boolean).join(" · ") || "El PDF no trae el NIT"}</div>
+                  </div>
+                  <button onClick={() => { setLupa({ tipo: "destinatario", idx: it.idx, inicial: { nombre: it.nombre }, datosCrear: it.datos });
+                      setNoMaestro(prev => { const resto = prev.items.filter(x => x.idx !== it.idx); return resto.length ? { items: resto } : null; }); }}
+                    style={{ height:34, padding:"0 14px", borderRadius:8, background:"#0F6E56", color:"#fff", border:"none", fontSize:12.5, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>🔍 Buscar cliente</button>
+                </div>
+              ))}
             </div>
-            <div style={{ padding:"0 22px 18px", display:"flex", gap:8, justifyContent:"flex-end" }}>
-              <button onClick={() => setNoMaestro(null)} style={{ height:40, padding:"0 18px", borderRadius:10, background:"#fff", color:"#6B8F80", border:"1px solid #E2EDE9", fontSize:13, fontWeight:600, cursor:"pointer" }}>Cerrar</button>
-              <button onClick={() => { setLupa({ tipo: "destinatario", idx: noMaestro.idx || 0, inicial: { nombre: noMaestro.nombre } }); setNoMaestro(null); }}
-                style={{ height:40, padding:"0 22px", borderRadius:10, background:"#0F6E56", color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }}>🔍 Buscar cliente</button>
+            <div style={{ padding:"0 22px 18px", textAlign:"right" }}>
+              <button onClick={() => setNoMaestro(null)} style={{ height:38, padding:"0 18px", borderRadius:10, background:"#fff", color:"#6B8F80", border:"1px solid #E2EDE9", fontSize:13, fontWeight:600, cursor:"pointer" }}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Información inconsistente: datos de la plantilla distintos al maestro ── */}
+      {inconsist && !noMaestro && (
+        <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:720, maxHeight:"88vh", overflow:"auto", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
+            <div style={{ background:"#FFF7ED", borderBottom:"1px solid #FDBA74", padding:"16px 22px", display:"flex", gap:12, alignItems:"center" }}>
+              <div style={{ width:36, height:36, borderRadius:10, background:"#EA580C", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:700, flexShrink:0 }}>≠</div>
+              <div>
+                <div style={{ fontSize:15, fontWeight:700, color:"#9A3412" }}>Información inconsistente con el maestro de clientes</div>
+                <div style={{ fontSize:12, color:"#9A3412" }}>El NIT existe, pero la plantilla trae datos distintos a los registrados.</div>
+              </div>
+            </div>
+            <div style={{ padding:"14px 22px" }}>
+              {inconsist.grupos.map(g => (
+                <div key={`${g.entrega}-${g.nit}`} style={{ border:"1px solid #E2EDE9", borderRadius:10, marginBottom:10, overflow:"hidden" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"8px 12px", background:"#F7FCF9", borderBottom:"1px solid #E2EDE9" }}>
+                    <span style={{ fontSize:12.5, color:"#1a2e27" }}><b>Entrega {g.entrega}</b> · NIT {g.nit}</span>
+                    <button onClick={() => { setLupa({ tipo: "destinatario", idx: g.idx, inicial: { nit: g.nit } }); setInconsist(null); }}
+                      style={{ height:30, padding:"0 12px", borderRadius:8, background:"#fff", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:12, fontWeight:600, cursor:"pointer" }}>🔍 Validar con lupa</button>
+                  </div>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <thead><tr style={{ color:"#6B8F80" }}>{["Campo", "Dato del Excel", "Dato en la base"].map(h => <th key={h} style={{ textAlign:"left", padding:"6px 12px", fontWeight:600, fontSize:11 }}>{h}</th>)}</tr></thead>
+                    <tbody>{g.diferencias.map(d => (
+                      <tr key={d.campo} style={{ borderTop:"1px solid #F0F5F3" }}>
+                        <td style={{ padding:"6px 12px", fontWeight:600, color:"#44574F" }}>{d.campo}</td>
+                        <td style={{ padding:"6px 12px", color:"#C2410C" }}>{d.excel}</td>
+                        <td style={{ padding:"6px 12px", color:"#0F6E56" }}>{d.base}</td>
+                      </tr>))}</tbody>
+                  </table>
+                </div>
+              ))}
+              <div style={{ fontSize:12, color:"#44574F", lineHeight:1.5 }}>
+                <b>Validar con lupa</b>: elige el cliente correcto y se usan los datos de la base.
+                <b> Continuar</b>: la solicitud se radica con los datos del Excel tal como vienen (queda registrado como información inconsistente).
+              </div>
+            </div>
+            <div style={{ padding:"0 22px 18px", display:"flex", justifyContent:"flex-end", gap:8, flexWrap:"wrap" }}>
+              <button onClick={() => setInconsist(null)} style={{ height:40, padding:"0 16px", borderRadius:10, background:"#fff", color:"#6B8F80", border:"1px solid #E2EDE9", fontSize:13, fontWeight:600, cursor:"pointer" }}>Decidir después</button>
+              <button onClick={aceptarInconsistencias} style={{ height:40, padding:"0 18px", borderRadius:10, background:"#EA580C", color:"#fff", border:"none", fontSize:13, fontWeight:600, cursor:"pointer" }}>Continuar con los datos del Excel</button>
             </div>
           </div>
         </div>
@@ -774,14 +914,14 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
           <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:440, overflow:"hidden", boxShadow:"0 28px 70px rgba(0,0,0,0.22)", animation:"popIn 0.28s cubic-bezier(0.34,1.56,0.64,1)" }}>
             <div style={{ background:"#0F6E56", padding:"22px 28px 20px", textAlign:"center" }}>
               <div style={{ fontSize:11, color:"rgba(255,255,255,0.65)", fontWeight:600, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10, textAlign:"right" }}>Logistics and Services</div>
-              <div style={{ fontSize:13, color:"rgba(255,255,255,0.85)", lineHeight:1.5, marginBottom:6 }}>{pdfMeta.esReintento ? "Esta solicitud ya estaba radicada" : "Solicitud radicada desde PDF"}</div>
+              <div style={{ fontSize:13, color:"rgba(255,255,255,0.85)", lineHeight:1.5, marginBottom:6 }}>{pdfMeta.esReintento ? "Esta solicitud ya estaba radicada" : origenCarga === "EXCEL" ? "Solicitud radicada desde la plantilla Excel" : "Solicitud radicada desde PDF"}</div>
               <div style={{ display:"inline-block", background:"rgba(255,255,255,0.15)", borderRadius:8, padding:"6px 18px" }}>
                 <span style={{ fontSize:11, color:"rgba(255,255,255,0.7)", marginRight:6 }}>N°</span>
                 <span style={{ fontSize:18, color:"#fff", fontWeight:700, letterSpacing:"0.04em" }}>{pdfMeta.solicitud}</span>
               </div>
             </div>
             <div style={{ padding:"20px 28px 6px" }}>
-              {[{ label:"Área solicitante", value: pdfMeta.area||"—" }, { label:"Fecha", value: pdfMeta.fecha }, { label:"N° Solicitud", value: pdfMeta.solicitud }, { label:"Solicitante", value: pdfMeta.solicitante||"—" }].map(({ label, value }) => (
+              {[{ label:"Área · Proceso", value: [pdfMeta.area, pdfMeta.proceso].filter(Boolean).join(" · ")||"—" }, { label:"Fecha", value: pdfMeta.fecha }, { label:"N° Solicitud", value: pdfMeta.solicitud }, { label:"Solicitante", value: pdfMeta.solicitante||"—" }].map(({ label, value }) => (
                 <div key={label} style={{ textAlign:"center", padding:"10px 0", borderBottom:"1px solid #F0F7F4" }}>
                   <div style={{ fontSize:10, color:"#9CB8AE", fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:3 }}>{label}</div>
                   <div style={{ fontSize:14, color:"#1a2e27", fontWeight:600 }}>{value}</div>
@@ -789,9 +929,9 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
               ))}
             </div>
             <div style={{ padding:"16px 28px 22px", textAlign:"center" }}>
-              <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>Se descargaron: despacho_, CARGA A WMS_ y CARGA LIBRO 1_</div>
+              <div style={{ fontSize:11, color:"#9CB8AE", marginBottom:14 }}>Se descargó el Excel del pedido (formato de la plantilla)</div>
               <div style={{ display:"flex", gap:8 }}>
-                <button onClick={resetPdf} style={{ flex:1, height:44, borderRadius:10, background:"#F2F8F5", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:13, fontWeight:600, cursor:"pointer" }} onMouseEnter={e => e.currentTarget.style.background="#E1F5EE"} onMouseLeave={e => e.currentTarget.style.background="#F2F8F5"}>Nuevo PDF</button>
+                <button onClick={resetPdf} style={{ flex:1, height:44, borderRadius:10, background:"#F2F8F5", color:"#0F6E56", border:"1px solid #C5DDD4", fontSize:13, fontWeight:600, cursor:"pointer" }} onMouseEnter={e => e.currentTarget.style.background="#E1F5EE"} onMouseLeave={e => e.currentTarget.style.background="#F2F8F5"}>Nuevo pedido</button>
                 <button onClick={() => setPdfPopup(false)} style={{ flex:1, height:44, borderRadius:10, background:"#0F6E56", color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }} onMouseEnter={e => e.currentTarget.style.background="#085041"} onMouseLeave={e => e.currentTarget.style.background="#0F6E56"}>Cerrar</button>
               </div>
             </div>
@@ -807,9 +947,11 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
 // ══════════════════════════════════════════════
 export default function PortalDespachos({ isMobile }) {
   const auth = useAuth();
+  // Solicitante y correo: siempre los del usuario que inició sesión (no se editan)
+  const correoSesion = auth?.perfil?.email || auth?.session?.user?.email || auth?.user?.email || "";
   const metaInicial = () => ({
-    area: up(auth?.perfil?.area || ""), fecha: generateFecha(), solicitud: "",
-    solicitante: up(auth?.perfil?.nombre || ""), correo: auth?.perfil?.email || auth?.session?.user?.email || "",
+    area: areaDeLista(auth?.perfil?.area), proceso: "", fecha: generateFecha(), solicitud: "",
+    solicitante: up(String(auth?.perfil?.nombre || "").trim() || correoSesion), correo: correoSesion,
   });
   const [rows, setRows] = useState([EMPTY_ROW()]);
   const [solicitudFinalizada, setSolicitudFinalizada] = useState(false);
@@ -929,6 +1071,7 @@ export default function PortalDespachos({ isMobile }) {
     if (enviando) return;
     const metaValidation = {};
     if (!meta.area.trim()) metaValidation["meta-area"] = true;
+    if (!meta.proceso) metaValidation["meta-proceso"] = true;
     if (!meta.solicitante.trim()) metaValidation["meta-solicitante"] = true;
     const correoTrimmed = meta.correo ? meta.correo.trim() : "";
     if (!correoTrimmed || !correoTrimmed.includes("@")) metaValidation["meta-correo"] = true;
@@ -936,6 +1079,7 @@ export default function PortalDespachos({ isMobile }) {
       setErrors(prev => ({ ...prev, ...metaValidation }));
       const missingMeta = [];
       if (metaValidation["meta-area"]) missingMeta.push("Área solicitante");
+      if (metaValidation["meta-proceso"]) missingMeta.push("Proceso");
       if (metaValidation["meta-solicitante"]) missingMeta.push("Solicitante");
       if (metaValidation["meta-correo"]) missingMeta.push("Correo electrónico");
       showToast(`⚠ Completa los campos del encabezado: ${missingMeta.join(", ")}`);
@@ -991,15 +1135,19 @@ export default function PortalDespachos({ isMobile }) {
       {/* Meta */}
       <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E2EDE9", padding:isMobile?"14px":"18px 22px", marginBottom:16 }}>
         <div style={{ fontSize:10, fontWeight:600, color:"#6B8F80", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>Información del envío</div>
-        <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr 1fr":"2fr 1.2fr 0.9fr 2fr 2fr", gap:12 }}>
-          <div>
-            <label style={{ fontSize:12, color:errors["meta-area"]?"#C0392B":"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>Área solicitante *</label>
-            <input type="text" value={meta.area} onChange={e => { setMeta(p => ({ ...p, area:up(e.target.value) })); setErrors(p => { const n={...p}; delete n["meta-area"]; return n; }); }} placeholder="ÁREA"
-              style={{ ...inputBase, textTransform:"uppercase", border:errors["meta-area"]?"1px solid #E74C3C":"1px solid #D4E5DE", background:errors["meta-area"]?"#FFF5F5":"#fff" }}
-              onFocus={e => { e.target.style.borderColor="#0F6E56"; e.target.style.boxShadow="0 0 0 3px rgba(15,110,86,0.08)"; e.target.style.background="#fff"; }}
-              onBlur={e => { e.target.style.borderColor=errors["meta-area"]?"#E74C3C":"#D4E5DE"; e.target.style.boxShadow="none"; }}
-            />
-          </div>
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr 1fr":"1.15fr 1fr 1.2fr 1fr 1.85fr 1.85fr", gap:12 }}>
+          {[["area", "Área solicitante", AREAS, "meta-area"], ["proceso", "Proceso", PROCESOS, "meta-proceso"]].map(([k, titulo, opciones, err]) => (
+            <div key={k}>
+              <label style={{ fontSize:12, color:errors[err]?"#C0392B":"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>{titulo} *</label>
+              <select value={meta[k]} disabled={solicitudFinalizada}
+                onChange={e => { const v = e.target.value; setMeta(p => ({ ...p, [k]: v })); setErrors(p => { const n={...p}; delete n[err]; return n; }); }}
+                style={{ ...inputBase, paddingRight:28, cursor:"pointer", color: meta[k] ? "#1a2e27" : "#9CB8AE",
+                  border:errors[err]?"1px solid #E74C3C":"1px solid #D4E5DE", background:`${errors[err]?"#FFF5F5":"#fff"} ${FLECHA_SELECT}` }}>
+                <option value="">Seleccione…</option>
+                {opciones.map(o => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
+              </select>
+            </div>
+          ))}
           <div>
             <label style={{ fontSize:12, color:"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>Fecha <span style={{ fontSize:10, color:"#9CB8AE" }}>automática</span></label>
             <input type="text" value={meta.fecha} readOnly style={inputReadonly} />
@@ -1009,20 +1157,12 @@ export default function PortalDespachos({ isMobile }) {
             <input type="text" value={meta.solicitud || "—"} readOnly style={{ ...inputReadonly, letterSpacing:"0.02em" }} />
           </div>
           <div>
-            <label style={{ fontSize:12, color:errors["meta-solicitante"]?"#C0392B":"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>Solicitante *</label>
-            <input type="text" value={meta.solicitante} onChange={e => { setMeta(p => ({ ...p, solicitante:up(e.target.value) })); setErrors(p => { const n={...p}; delete n["meta-solicitante"]; return n; }); }} placeholder="NOMBRE SOLICITANTE"
-              style={{ ...inputBase, textTransform:"uppercase", border:errors["meta-solicitante"]?"1px solid #E74C3C":"1px solid #D4E5DE", background:errors["meta-solicitante"]?"#FFF5F5":"#fff" }}
-              onFocus={e => { e.target.style.borderColor="#0F6E56"; e.target.style.boxShadow="0 0 0 3px rgba(15,110,86,0.08)"; e.target.style.background="#fff"; }}
-              onBlur={e => { e.target.style.borderColor=errors["meta-solicitante"]?"#E74C3C":"#D4E5DE"; e.target.style.boxShadow="none"; }}
-            />
+            <label style={{ fontSize:12, color:"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>Solicitante <span style={{ fontSize:10, color:"#9CB8AE" }}>usuario en sesión</span></label>
+            <input type="text" value={meta.solicitante} readOnly title={meta.solicitante} style={inputReadonly} />
           </div>
           <div>
-            <label style={{ fontSize:12, color:errors["meta-correo"]?"#C0392B":"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>Correo electrónico *</label>
-            <input type="email" value={meta.correo} onChange={e => { const val = e.target.value.replace(/\s/g, ""); setMeta(p => ({ ...p, correo: val })); setErrors(p => { const n={...p}; delete n["meta-correo"]; return n; }); }} placeholder="correo@empresa.com"
-              style={{ ...inputBase, border:errors["meta-correo"]?"1px solid #E74C3C":"1px solid #D4E5DE", background:errors["meta-correo"]?"#FFF5F5":"#fff" }}
-              onFocus={e => { e.target.style.borderColor="#0F6E56"; e.target.style.boxShadow="0 0 0 3px rgba(15,110,86,0.08)"; e.target.style.background="#fff"; }}
-              onBlur={e => { e.target.style.borderColor=errors["meta-correo"]?"#E74C3C":"#D4E5DE"; e.target.style.boxShadow="none"; }}
-            />
+            <label style={{ fontSize:12, color:"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>Correo electrónico <span style={{ fontSize:10, color:"#9CB8AE" }}>usuario en sesión</span></label>
+            <input type="email" value={meta.correo} readOnly title={meta.correo} style={inputReadonly} />
           </div>
         </div>
       </div>

@@ -4,8 +4,10 @@
 //   2. CARGA A WMS_<AREA>_<N°>.xlsx    → lo que se sube al WMS (con EAN)
 //   3. CARGA LIBRO 1_<AREA>_<N°>.xlsx  → una fila por ENTREGA: SKU = cuántos
 //      artículos tiene la entrega, CANTIDAD = suma de unidades de la entrega.
-// Todas las pantallas (radicación manual, PDF, Solicitudes de hoy, Solicitudes
-// y bloques) usan este servicio: un solo formato, un solo lugar para cambiarlo.
+// Todas las pantallas usan este servicio: un solo formato, un solo lugar para cambiarlo.
+// Fase 6: la pantalla Despachos (radicar y "Solicitudes de hoy") descarga solo
+// el Excel con el formato de la plantilla (descargarExcelPlantilla, al final).
+// La pestaña Solicitudes y los bloques siguen con los 3 archivos.
 // ─────────────────────────────────────────────────────────────────────────
 import * as XLSX from "xlsx";
 import { fechaHoraBogota } from "../utils/fechas";
@@ -72,6 +74,7 @@ export function normalizarLinea(l, enc = {}) {
     um:           texto(l.um || "BUL"),
     item:         itemValor(l.item),
     bodega:       texto(l.bodega),
+    observaciones: texto(l.observaciones),
   };
 }
 
@@ -133,4 +136,37 @@ export async function descargarArchivosDespacho({ area, numero, lineas }) {
     XLSX.writeFile(archivos[i][1], archivos[i][0]);
   }
   return archivos.map(a => a[0]);
+}
+
+// ── Excel con el formato de la plantilla (fase 6) ───────────────────────
+// Pantalla Despachos (al radicar y en "Solicitudes de hoy"): el solicitante
+// descarga UN solo Excel con las mismas 10 columnas de Plantilla_Pedido.xlsx,
+// venga la solicitud de PDF, de la plantilla Excel o digitada a mano.
+export const COLUMNAS_PLANTILLA = [
+  { titulo: "Entrega",             campo: "entrega",       ancho: 16 },
+  { titulo: "Nit",                 campo: "nit",           ancho: 14 },
+  { titulo: "Nombre destinatario", campo: "nombre",        ancho: 34 },
+  { titulo: "Direccion",           campo: "direccion",     ancho: 30 },
+  { titulo: "Telefono",            campo: "telefono",      ancho: 15 },
+  { titulo: "Ciudad",              campo: "ciudad",        ancho: 16 },
+  { titulo: "Departamento",        campo: "departamento",  ancho: 16 },
+  { titulo: "Material",            campo: "sku",           ancho: 16 },
+  { titulo: "Cantidad",            campo: "cantidad",      ancho: 10, numero: true },
+  { titulo: "Observaciones",       campo: "observaciones", ancho: 40 },
+];
+
+export function hojaPlantilla(lineas) {
+  const ws = XLSX.utils.aoa_to_sheet([
+    COLUMNAS_PLANTILLA.map(c => c.titulo),
+    ...lineas.map(l => COLUMNAS_PLANTILLA.map(c => l[c.campo] ?? "")),
+  ]);
+  ws["!cols"] = COLUMNAS_PLANTILLA.map(c => ({ wch: c.ancho }));
+  return ws;
+}
+
+/** Descarga pedido_<AREA>_<N°>.xlsx con el formato de la plantilla. `lineas` normalizadas. */
+export function descargarExcelPlantilla({ area, numero, lineas }) {
+  const nombre = `pedido_${(area || "envio").trim().replace(/\s+/g, "_")}_${numero}.xlsx`;
+  XLSX.writeFile(libro(hojaPlantilla(lineas), "Plantilla"), nombre);
+  return nombre;
 }

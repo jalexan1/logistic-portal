@@ -35,6 +35,8 @@ const aLinea = (r) => ({
   // Fase 3: si llegan vacíos, la base los completa con los maestros
   ean: r.ean || null, direccion: r.direccion || null,
   departamento: r.departamento || null, telefono: r.telefono || null,
+  // Fase 6: observaciones de la plantilla Excel
+  observaciones: r.observaciones ? String(r.observaciones).trim() : null,
 });
 
 /**
@@ -52,6 +54,7 @@ export async function radicarSolicitud({ llave, meta, filas, origen, pedidoHeade
     p_numero_pedido_origen: pedidoHeader?.numeroPedido || null,
     p_archivo_origen: archivo,
     p_datos_origen: pedidoHeader,
+    p_proceso: meta.proceso || null,
   });
   if (error) throw new Error(mensajeError(error));
   const r = Array.isArray(data) ? data[0] : data;
@@ -64,7 +67,7 @@ export async function radicarSolicitud({ llave, meta, filas, origen, pedidoHeade
 
 export async function listarSolicitudes({ desde, hasta, estado, texto, limite = 200 } = {}) {
   let q = despachos().from("vw_solicitudes")
-    .select("id,numero,version,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,motivo_anulacion,lote_id,lote_numero,procesada_at")
+    .select("id,numero,version,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,motivo_anulacion,lote_id,lote_numero,procesada_at,proceso")
     .order("radicada_at", { ascending: false }).limit(limite);
   if (desde)  q = q.gte("fecha_radicacion", desde);
   if (hasta)  q = q.lte("fecha_radicacion", hasta);
@@ -80,7 +83,7 @@ export async function listarSolicitudes({ desde, hasta, estado, texto, limite = 
 
 export async function obtenerLineas(solicitudId) {
   const { data, error } = await despachos().from("solicitud_lineas")
-    .select("linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,producto_descripcion,cantidad,um,item,bodega")
+    .select("linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,producto_descripcion,cantidad,um,item,bodega,observaciones")
     .eq("solicitud_id", solicitudId).order("linea_nro");
   if (error) throw new Error(mensajeError(error));
   return data;

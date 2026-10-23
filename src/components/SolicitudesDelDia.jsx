@@ -4,13 +4,14 @@
 // un rango de fechas. Se recarga sola cada vez que se radica una solicitud
 // (prop `recarga`). La lectura respeta los permisos del usuario:
 //  · solicitante → ve las suyas   · operador / consulta / admin → ve todas
-// UNA FILA POR SOLICITUD (resumen). El detalle de las líneas va en los Excel
-// que se descargan (despacho_, CARGA A WMS_ y CARGA LIBRO 1_) y en la pestaña
-// Solicitudes, que sí muestra una fila por línea con todos los campos.
+// UNA FILA POR SOLICITUD (resumen). El detalle de las líneas va en el Excel
+// que se descarga: fase 6 → UN solo archivo con el formato de la plantilla
+// (Plantilla_Pedido.xlsx: Entrega, Nit, Nombre, Dirección, Teléfono, Ciudad,
+// Departamento, Material, Cantidad, Observaciones), venga de PDF, Excel o manual.
 // ─────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { listarSolicitudes, obtenerLineas } from "../services/solicitudesService";
-import { normalizarLinea, descargarArchivosDespacho } from "../services/excelDespachoService";
+import { normalizarLinea, descargarExcelPlantilla } from "../services/excelDespachoService";
 import { fechaHoraBogota, horaBogota, isoFechaBogota } from "../utils/fechas";
 
 const ESTADO_UI = {
@@ -52,14 +53,14 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
 
   const verHoy = () => { setDesde(hoy()); setHasta(hoy()); };
 
-  // Los 3 archivos de la solicitud, con todas sus líneas
+  // Excel de la solicitud con el formato de la plantilla (todas sus líneas)
   const descargarExcel = async (sol) => {
     setBajando(sol.id);
     try {
       const lineas = await obtenerLineas(sol.id);
       const enc = { numero: sol.numero, area: sol.area_solicitante, solicitante: sol.solicitante_nombre,
         correo: sol.solicitante_correo, radicadaAt: sol.radicada_at };
-      await descargarArchivosDespacho({ area: sol.area_solicitante, numero: sol.numero, lineas: lineas.map(l => normalizarLinea(l, enc)) });
+      descargarExcelPlantilla({ area: sol.area_solicitante, numero: sol.numero, lineas: lineas.map(l => normalizarLinea(l, enc)) });
     } catch (e) {
       if (showToast) showToast("⚠ " + e.message);
     } finally { setBajando(null); }
@@ -112,6 +113,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                 <th style={th}>N° solicitud</th>
                 <th style={th}>{esHoy ? "Hora" : "Fecha y hora"}</th>
                 <th style={th}>Área</th>
+                <th style={th}>Proceso</th>
                 <th style={th}>Solicitante</th>
                 <th style={th}>Origen</th>
                 <th style={{ ...th, textAlign: "right" }}>Líneas</th>
@@ -128,15 +130,16 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                     <td style={{ ...td, fontWeight: 700, color: "#0F6E56" }}>{sol.numero}</td>
                     <td style={td}>{esHoy ? horaBogota(sol.radicada_at) : fechaHoraBogota(sol.radicada_at)}</td>
                     <td style={td}>{sol.area_solicitante}</td>
+                    <td style={td}>{({ RAPPI: "Rappi", MP: "MP", VARIOS: "Varios" })[sol.proceso] || "—"}</td>
                     <td style={{ ...td, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }} title={sol.solicitante_correo || ""}>{sol.solicitante_nombre}</td>
-                    <td style={{ ...td, color: "#6B8F80" }}>{sol.origen === "PDF" ? `PDF${sol.numero_pedido_origen ? " · " + sol.numero_pedido_origen : ""}` : "Manual"}</td>
+                    <td style={{ ...td, color: "#6B8F80" }}>{sol.origen === "PDF" ? `PDF${sol.numero_pedido_origen ? " · " + sol.numero_pedido_origen : ""}` : sol.origen === "EXCEL" ? "Plantilla Excel" : "Manual"}</td>
                     <td style={{ ...td, textAlign: "right" }}>{num(sol.total_lineas)}</td>
                     <td style={{ ...td, textAlign: "right" }}>{num(sol.total_unidades)}</td>
                     <td style={td}>
                       <span title={sol.motivo_anulacion || (sol.lote_numero ? `Bloque ${sol.lote_numero}` : "")} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "3px 10px", borderRadius: 20 }}>{est.label}</span>
                     </td>
                     <td style={{ ...td, textAlign: "center" }}>
-                      <button onClick={() => descargarExcel(sol)} disabled={bajando === sol.id} title={`Descargar despacho_, CARGA A WMS_ y CARGA LIBRO 1_ de ${sol.numero}`}
+                      <button onClick={() => descargarExcel(sol)} disabled={bajando === sol.id} title={`Descargar el Excel de ${sol.numero} (formato de la plantilla)`}
                         style={{ height: 28, padding: "0 10px", fontSize: 11, fontWeight: 600, border: "1px solid #D4E5DE", borderRadius: 7, background: "#fff", color: "#0F6E56", cursor: bajando === sol.id ? "wait" : "pointer" }}>
                         {bajando === sol.id ? "…" : "⬇ .xlsx"}
                       </button>
