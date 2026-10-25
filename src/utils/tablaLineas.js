@@ -58,3 +58,27 @@ export const coincide = (valor, filtro) => {
 
 export const filtrarLineas = (lineas, filtros, columnas = COLUMNAS_LINEAS) =>
   lineas.filter(f => columnas.every(c => coincide(valorCelda(f, c.key), filtros[c.key])));
+
+// ── Listas del encabezado de la solicitud (pantalla Despachos) ──────────
+// valor = lo que se guarda en la base · etiqueta = lo que ve el usuario
+export const AREAS = [
+  { valor: "LOGISTICA",  etiqueta: "Logística" },
+  { valor: "COMPRAS",    etiqueta: "Compras" },
+  { valor: "CALIDAD",    etiqueta: "Calidad" },
+  { valor: "PLANEACION", etiqueta: "Planeación" },
+  { valor: "JEFATURA",   etiqueta: "Jefatura" },
+  { valor: "GERENCIA",   etiqueta: "Gerencia" },
+];
+// Motivo (antes "Proceso"; se guarda en la columna proceso)
+export const MOTIVOS = [
+  { valor: "VARIOS",     etiqueta: "Varios" },
+  { valor: "RAPPI",      etiqueta: "Rappi" },
+  { valor: "LUEGO PAGO", etiqueta: "Luego Pago" },
+  { valor: "FARMATODO",  etiqueta: "Farmatodo" },
+  { valor: "MP",         etiqueta: "MP" },
+];
+// Motivos SIN datos de cliente: NIT, nombre, dirección, teléfono, ciudad y
+// departamento no se exigen y se llenan con la palabra del motivo.
+export const MOTIVOS_SIN_CLIENTE = ["LUEGO PAGO", "FARMATODO"];
+export const etiquetaMotivo = (v) => MOTIVOS.find(m => m.valor === v)?.etiqueta || v || "";
+export const etiquetaArea = (v) => AREAS.find(a => a.valor === v)?.etiqueta || v || "";

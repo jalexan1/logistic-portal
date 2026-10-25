@@ -14,14 +14,13 @@ import { listarSolicitudesRango, listarLineasSolicitudes, listarLotes, obtenerLi
 import { libroBloque, descargarExcelBloque } from "../services/excelDespachoService";
 import { listarAdjuntos } from "../services/adjuntosService";
 import { cargarParametros, diasRango, PARAMETROS_DEFECTO } from "../services/parametrosService";
-import { coincide, uiEstado } from "../utils/tablaLineas";
+import { coincide, uiEstado, etiquetaMotivo, etiquetaArea } from "../utils/tablaLineas";
 import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
 import Paginador from "./Paginador";
 import AdjuntosBoton from "./AdjuntosBoton";
 
 const hace = (dias) => { const d = new Date(); d.setDate(d.getDate() - dias); return isoFechaBogota(d); };
 const num = (n) => Number(n || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 });
-const PROCESO = { RAPPI: "Rappi", MP: "MP", VARIOS: "Varios" };
 const ORIGEN = { PDF: "PDF", EXCEL: "Plantilla Excel", MANUAL: "Manual" };
 
 const COL_SOL = [
@@ -29,7 +28,7 @@ const COL_SOL = [
   { key: "fecha", titulo: "Fecha y hora", w: 130 },
   { key: "estado", titulo: "Estado", w: 100 },
   { key: "area_solicitante", titulo: "Área", w: 110 },
-  { key: "proceso", titulo: "Proceso", w: 90 },
+  { key: "proceso", titulo: "Motivo", w: 100 },
   { key: "solicitante_nombre", titulo: "Solicitante", w: 170 },
   { key: "origen", titulo: "Origen", w: 110 },
   { key: "total_lineas", titulo: "Líneas", w: 70, num: true },
@@ -38,7 +37,8 @@ const COL_SOL = [
 ];
 const valorSol = (s, k) => k === "fecha" ? fechaHoraBogota(s.radicada_at)
   : k === "estado" ? uiEstado(s.estado_codigo, s.estado_nombre).label
-  : k === "proceso" ? (PROCESO[s.proceso] || "")
+  : k === "proceso" ? etiquetaMotivo(s.proceso)
+  : k === "area_solicitante" ? etiquetaArea(s.area_solicitante)
   : k === "origen" ? (ORIGEN[s.origen] || s.origen || "")
   : s[k] ?? "";
 

@@ -11,6 +11,7 @@ import BuscadorMaestro from "./BuscadorMaestro";
 import { leerModeloNoviembre2026, normalizarSku, NOMBRE_MODELO_NOVIEMBRE_2026 } from "../services/pdfModeloNoviembre2026";
 import { fechaHoraBogota } from "../utils/fechas";
 import { useAuth } from "./auth/authContext";
+import { AREAS, MOTIVOS, MOTIVOS_SIN_CLIENTE, etiquetaMotivo } from "../utils/tablaLineas";
 import SolicitudesDelDia from "./SolicitudesDelDia";
 
 // ── Helpers de fecha ──
@@ -23,8 +24,10 @@ const up = v => typeof v === "string" ? v.toUpperCase() : v;
 
 // ── Listas del encabezado (fase 6) ──
 // valor = lo que se guarda en la base · etiqueta = lo que ve el usuario
-const AREAS = [{ valor: "COMPRAS", etiqueta: "Compras" }, { valor: "LOGISTICA", etiqueta: "Logística" }];
-const PROCESOS = [{ valor: "RAPPI", etiqueta: "Rappi" }, { valor: "MP", etiqueta: "MP" }, { valor: "VARIOS", etiqueta: "Varios" }];
+// (AREAS, MOTIVOS y MOTIVOS_SIN_CLIENTE están en utils/tablaLineas.js)
+// Campos del cliente que se llenan con la palabra del motivo (LUEGO PAGO / FARMATODO)
+const CAMPOS_CLIENTE = ["destinatario", "nombre", "direccion", "telefono", "lugar", "departamento"];
+const llenarSinCliente = (r, motivo) => ({ ...r, ...Object.fromEntries(CAMPOS_CLIENTE.map(k => [k, motivo])) });
 const sinTildes = v => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
 const areaDeLista = v => AREAS.find(a => a.valor === sinTildes(v))?.valor || "";
 const FLECHA_SELECT = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%230F6E56' stroke-width='1.6' fill='none'/%3E%3C/svg%3E\") no-repeat right 10px center";
@@ -97,7 +100,7 @@ function SuccessPopup({ visible, meta, onClose, onNewRequest }) {
         </div>
         <div style={{ padding:"20px 28px 6px" }}>
           {[
-            { label:"Área · Proceso",   value: [meta.area, meta.proceso].filter(Boolean).join(" · ") || "—" },
+            { label:"Área · Motivo",    value: [meta.area, etiquetaMotivo(meta.proceso)].filter(Boolean).join(" · ") || "—" },
             { label:"Fecha",            value: meta.fecha             },
             { label:"N° Solicitud",     value: meta.solicitud         },
             { label:"Solicitante",      value: meta.solicitante || "—" },
@@ -254,6 +257,24 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const [cargandoExcel, setCargandoExcel] = useState(false);
   const [dragExcel, setDragExcel] = useState(false);
   const excelInputRef = useRef(null);
+  // ── Motivo sin cliente (LUEGO PAGO / FARMATODO) ──
+  // Al elegirlo, NIT, nombre, dirección, teléfono, ciudad y departamento se
+  // llenan con la palabra del motivo y no se pide buscar ni crear el cliente.
+  // Si se cambia a otro motivo, se recuperan los datos que traía el archivo.
+  const sinCliente = MOTIVOS_SIN_CLIENTE.includes(meta.proceso);
+  useEffect(() => {
+    if (!pdfRows.length) return;
+    if (sinCliente) {
+      if (pdfRows.every(r => CAMPOS_CLIENTE.every(k => r[k] === meta.proceso))) return;
+      setPdfRows(prev => prev.map(r => ({ ...llenarSinCliente(r, meta.proceso), _orig: r._orig || Object.fromEntries(CAMPOS_CLIENTE.map(k => [k, r[k] ?? ""])) })));
+      setNoMaestro(null); setInconsist(null);
+      setRowErrors(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !CAMPOS_CLIENTE.some(c => k.endsWith(`-${c}`)))));
+      setError(prev => (/maestro de clientes/.test(prev) ? "" : prev));
+    } else if (pdfRows.some(r => r._orig)) {
+      setPdfRows(prev => prev.map(r => { if (!r._orig) return r; const { _orig, ...resto } = r; return { ...resto, ..._orig }; }));
+    }
+  }, [sinCliente, meta.proceso, pdfRows]);
+
   // Adjuntos del pedido (.zip, imágenes, QR): se suben al radicar
   const [adjuntos, setAdjuntos] = useState([]);
   const [adjSubidos, setAdjSubidos] = useState(false);
@@ -616,11 +637,15 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   };
 
   // Campos obligatorios ("parametrizados"): si el PDF no los trae, se deben digitar
-  const OBLIGATORIOS = ["entrega", "destinatario", "nombre", "lugar", "material", "ean", "cantidad", "um", "item", "bodega"];
+  // VARIOS, RAPPI y MP: TODOS los campos son obligatorios (incluye dirección, teléfono y departamento).
+  // LUEGO PAGO y FARMATODO: los datos del cliente se llenan con la palabra del motivo.
+  const OBLIGATORIOS = ["entrega", "destinatario", "nombre", "direccion", "telefono", "lugar", "departamento", "material", "ean", "cantidad", "um", "item", "bodega"];
   const faltaEn = (r, k) => OBLIGATORIOS.includes(k) && (k === "cantidad" ? !(parseFloat(r.cantidad) > 0) : !String(r[k] ?? "").trim());
 
   const exportPdfToExcel = async () => {
     if (pdfRows.length === 0 || enviandoPdf) return;
+    // Motivo sin cliente: asegura que los campos del cliente lleven la palabra del motivo
+    const filasRadicar = sinCliente ? pdfRows.map(r => llenarSinCliente(r, meta.proceso)) : pdfRows;
     if (solicitudYaGenerada) { if (showToast) showToast(`⚠ Solicitud ya radicada con: ${fileName}`); setPdfPopup(true); return; }
     const metaErrs = {};
     if (!meta.area.trim()) metaErrs["pdf-area"] = true;
@@ -629,8 +654,9 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     const correoTrimmed = meta.correo ? meta.correo.trim() : "";
     if (!correoTrimmed || !correoTrimmed.includes("@")) metaErrs["pdf-correo"] = true;
     const rErrs = {};
-    pdfRows.forEach((r, idx) => {
+    filasRadicar.forEach((r, idx) => {
       OBLIGATORIOS.forEach(k => { if (faltaEn(r, k)) rErrs[`${idx}-${k}`] = true; });
+      if (sinCliente) return;   // LUEGO PAGO / FARMATODO: no se valida el cliente contra el maestro
       const m = BD_CLIENTES[String(r.destinatario || "").trim()];
       // Plantilla Excel: el cliente debe existir en el maestro (o crearse con la lupa)
       if (origenCarga === "EXCEL" && r.destinatario && !m) rErrs[`${idx}-destinatario`] = true;
@@ -638,7 +664,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       if (m && !r.inconsistenciaAceptada && String(m.nombre).trim().toUpperCase() !== String(r.nombre || "").trim().toUpperCase()) rErrs[`${idx}-nombre`] = true;
     });
     // Plantilla Excel con datos distintos al maestro sin decidir → mostrar el aviso
-    const pendientesInc = inconsistenciasPendientes();
+    const pendientesInc = sinCliente ? [] : inconsistenciasPendientes();
     if (pendientesInc.length && Object.keys(metaErrs).length === 0) {
       setInconsist({ grupos: pendientesInc });
       if (showToast) showToast("⚠ Hay información inconsistente con el maestro: decida si continúa con los datos del Excel o los valida con la lupa.");
@@ -648,7 +674,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       setRowErrors(rErrs);
       const msgs = [];
       if (metaErrs["pdf-area"]) msgs.push("Área solicitante (arriba)");
-      if (metaErrs["pdf-proceso"]) msgs.push("Proceso (arriba)");
+      if (metaErrs["pdf-proceso"]) msgs.push("Motivo (arriba)");
       if (metaErrs["pdf-solicitante"]) msgs.push("Solicitante");
       if (metaErrs["pdf-correo"]) msgs.push("Correo electrónico");
       const filasFaltantes = [...new Set(Object.keys(rErrs).map(k => `Fila ${parseInt(k)+1}`))];
@@ -663,7 +689,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     let radicada;
     try {
       radicada = await radicarSolicitud({
-        llave: llavePdfRef.current, meta, filas: pdfRows, origen: origenCarga,
+        llave: llavePdfRef.current, meta, filas: filasRadicar, origen: origenCarga,
         pedidoHeader, archivo: fileName || null,
       });
     } catch (ex) {
@@ -687,7 +713,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
 
     // ── Un solo Excel con el formato de la plantilla (con lo guardado en la base)
     await descargarDespacho({ id: radicada.id, numero: solicitudFinal, area: meta.area, solicitante: meta.solicitante,
-      correo: meta.correo, radicadaAt: radicada.radicadaAt, filasLocales: pdfRows });
+      correo: meta.correo, radicadaAt: radicada.radicadaAt, filasLocales: filasRadicar });
 
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
@@ -813,7 +839,12 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         {error && <div style={{ background: error.startsWith("⚠") ? "#FFFBEB" : "#FFF5F5", border: `1px solid ${error.startsWith("⚠") ? "#F6D860" : "#F5A0A0"}`, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color: error.startsWith("⚠") ? "#92600A" : "#C0392B", lineHeight:1.5 }}>{error}</div>}
         {pdfRows.length > 0 && (
           <>
-            {origenCarga === "EXCEL" && !inconsist && inconsistenciasPendientes().length > 0 && (
+            {sinCliente && (
+              <div style={{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:10, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#1E3A8A" }}>
+                Motivo <b>{etiquetaMotivo(meta.proceso)}</b>: no se exigen datos del cliente. NIT, nombre, dirección, teléfono, ciudad y departamento se llenan con «{meta.proceso}».
+              </div>
+            )}
+            {!sinCliente && origenCarga === "EXCEL" && !inconsist && inconsistenciasPendientes().length > 0 && (
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, background:"#FFF7ED", border:"1px solid #FDBA74", borderRadius:10, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#9A3412" }}>
                 <span><b>{inconsistenciasPendientes().length} entrega{inconsistenciasPendientes().length !== 1 ? "s" : ""} con información inconsistente</b> con el maestro de clientes. Decida antes de radicar.</span>
                 <button onClick={() => setInconsist({ grupos: inconsistenciasPendientes() })} style={{ height:30, padding:"0 12px", borderRadius:8, background:"#EA580C", color:"#fff", border:"none", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>Revisar</button>
@@ -879,7 +910,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
         )}
       </div>
       {lupa && <BuscadorMaestro tipo={lupa.tipo} inicial={lupa.inicial} datosCrear={lupa.datosCrear} onElegir={elegirDeLupa} onCerrar={() => setLupa(null)} />}
-      {noMaestro && (
+      {noMaestro && !sinCliente && (
         <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
           <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:540, maxHeight:"88vh", overflow:"auto", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
             <div style={{ background:"#FFFBEB", borderBottom:"1px solid #FCD9A0", padding:"16px 22px", display:"flex", gap:12, alignItems:"center" }}>
@@ -912,7 +943,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       )}
 
       {/* ── Información inconsistente: datos de la plantilla distintos al maestro ── */}
-      {inconsist && !noMaestro && (
+      {inconsist && !noMaestro && !sinCliente && (
         <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
           <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:720, maxHeight:"88vh", overflow:"auto", boxShadow:"0 28px 70px rgba(0,0,0,0.22)" }}>
             <div style={{ background:"#FFF7ED", borderBottom:"1px solid #FDBA74", padding:"16px 22px", display:"flex", gap:12, alignItems:"center" }}>
@@ -965,7 +996,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
               </div>
             </div>
             <div style={{ padding:"20px 28px 6px" }}>
-              {[{ label:"Área · Proceso", value: [pdfMeta.area, pdfMeta.proceso].filter(Boolean).join(" · ")||"—" }, { label:"Fecha", value: pdfMeta.fecha }, { label:"N° Solicitud", value: pdfMeta.solicitud }, { label:"Solicitante", value: pdfMeta.solicitante||"—" }].map(({ label, value }) => (
+              {[{ label:"Área · Motivo", value: [pdfMeta.area, etiquetaMotivo(pdfMeta.proceso)].filter(Boolean).join(" · ")||"—" }, { label:"Fecha", value: pdfMeta.fecha }, { label:"N° Solicitud", value: pdfMeta.solicitud }, { label:"Solicitante", value: pdfMeta.solicitante||"—" }].map(({ label, value }) => (
                 <div key={label} style={{ textAlign:"center", padding:"10px 0", borderBottom:"1px solid #F0F7F4" }}>
                   <div style={{ fontSize:10, color:"#9CB8AE", fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:3 }}>{label}</div>
                   <div style={{ fontSize:14, color:"#1a2e27", fontWeight:600 }}>{value}</div>
@@ -1123,13 +1154,16 @@ export default function PortalDespachos({ isMobile }) {
       setErrors(prev => ({ ...prev, ...metaValidation }));
       const missingMeta = [];
       if (metaValidation["meta-area"]) missingMeta.push("Área solicitante");
-      if (metaValidation["meta-proceso"]) missingMeta.push("Proceso");
+      if (metaValidation["meta-proceso"]) missingMeta.push("Motivo");
       if (metaValidation["meta-solicitante"]) missingMeta.push("Solicitante");
       if (metaValidation["meta-correo"]) missingMeta.push("Correo electrónico");
       showToast(`⚠ Completa los campos del encabezado: ${missingMeta.join(", ")}`);
       return;
     }
-    const syncedRows = syncAllClientes(rows);
+    // LUEGO PAGO / FARMATODO: los campos del cliente llevan la palabra del motivo
+    const syncedRows = MOTIVOS_SIN_CLIENTE.includes(meta.proceso)
+      ? rows.map(r => ({ ...r, destinatario: meta.proceso, nombre: meta.proceso, lugar: meta.proceso, direccion: meta.proceso, telefono: meta.proceso, departamento: meta.proceso }))
+      : syncAllClientes(rows);
     setRows(syncedRows);
     const allErrors = {};
     syncedRows.forEach(r => Object.assign(allErrors, validateRowPure(r, syncedRows)));
@@ -1180,7 +1214,7 @@ export default function PortalDespachos({ isMobile }) {
       <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E2EDE9", padding:isMobile?"14px":"18px 22px", marginBottom:16 }}>
         <div style={{ fontSize:10, fontWeight:600, color:"#6B8F80", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>Información del envío</div>
         <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr 1fr":"1.15fr 1fr 1.2fr 1fr 1.85fr 1.85fr", gap:12 }}>
-          {[["area", "Área solicitante", AREAS, "meta-area"], ["proceso", "Proceso", PROCESOS, "meta-proceso"]].map(([k, titulo, opciones, err]) => (
+          {[["area", "Área solicitante", AREAS, "meta-area"], ["proceso", "Motivo", MOTIVOS, "meta-proceso"]].map(([k, titulo, opciones, err]) => (
             <div key={k}>
               <label style={{ fontSize:12, color:errors[err]?"#C0392B":"#6B8F80", display:"block", marginBottom:5, fontWeight:500 }}>{titulo} *</label>
               <select value={meta[k]} disabled={solicitudFinalizada}
