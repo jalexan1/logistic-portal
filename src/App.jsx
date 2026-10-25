@@ -4,6 +4,9 @@ import InventarioPasillos from "./components/InventarioPasillos";
 import Utilidades from "./components/utilidades/Utilidades"; // ── NUEVO: módulo Utilidades
 import Solicitudes from "./components/Solicitudes";
 import Clientes from "./components/Clientes";
+import Historico from "./components/Historico";
+import ParametrosTomaPedido from "./components/admon/ParametrosTomaPedido";
+import AdminBaseDatos from "./components/admon/AdminBaseDatos";
 import { useAuth } from "./components/auth/authContext";
 import { PLATAFORMA_URL } from "./lib/supabase";
 
@@ -75,20 +78,28 @@ const VISTAS = [
       </svg>
     ),
   },
-  // ── NUEVO: Utilidades ──────────────────────────────────────────────────
+  // Histórico de solicitudes y bloques: solo supervisor (operador) y administrador
   {
-    id: "utilidades",
-    label: "Utilidades",
-    labelCorto: "Utilidades",
-    requiere: ["DESPACHOS", "INVENTARIO"],
+    id: "historico",
+    label: "Histórico",
+    labelCorto: "Histórico",
+    requiere: ["DESPACHOS"],
+    rolesPermitidos: ["operador", "admin"],
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M13.5 2.5L10 6l-1.5-1.5L12 1l1.5 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-        <path d="M10 6 5.5 10.5A2.12 2.12 0 1 0 8 13L12.5 8.5 10 6Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-        <circle cx="4.5" cy="12.5" r="1" fill="currentColor"/>
+        <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+        <path d="M2 2.5v2.8h2.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M8 5v3.2l2.2 1.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
       </svg>
     ),
   },
+];
+
+// ── Menú Admon (solo administrador): irá creciendo con más opciones ──
+const OPCIONES_ADMON = [
+  { id: "utilidades", label: "Utilidades", descripcion: "Herramientas de apoyo (extracción de picking, etc.)", icono: "🛠" },
+  { id: "parametros", label: "Parámetros TomaPedido", descripcion: "Adjuntos, retención, rangos de consulta", icono: "⚙" },
+  { id: "admin_bd",   label: "Administración BD y adjuntos", descripcion: "Respaldo de adjuntos y SQL de consulta", icono: "🗄" },
 ];
 
 // ══════════════════════════════════════
@@ -100,11 +111,22 @@ export default function App() {
 
   // Solo las vistas permitidas por los accesos del usuario (core.accesos)
   const vistas = VISTAS.filter(v => v.requiere.some(app => roles?.[app] && (!v.rolesPermitidos || v.rolesPermitidos.includes(roles[app]))));
+  // Admon: solo administrador (rol admin en cualquier aplicación)
+  const esAdmin = Object.values(roles || {}).includes("admin");
+  const admon = esAdmin ? OPCIONES_ADMON : [];
   const inicial = (() => {
     const pedida = new URLSearchParams(window.location.search).get("vista");
-    return vistas.find(v => v.id === pedida)?.id || vistas[0]?.id;
+    return (vistas.find(v => v.id === pedida) || admon.find(v => v.id === pedida))?.id || vistas[0]?.id || admon[0]?.id;
   })();
   const [vista, setVista] = useState(inicial);
+  const [menuAdmon, setMenuAdmon] = useState(false);
+  const enAdmon = admon.some(o => o.id === vista);
+  useEffect(() => {
+    if (!menuAdmon) return;
+    const cerrar = () => setMenuAdmon(false);
+    window.addEventListener("click", cerrar);
+    return () => window.removeEventListener("click", cerrar);
+  }, [menuAdmon]);
 
   const nombreUsuario = perfil?.nombre || perfil?.email || "Usuario";
 
@@ -126,15 +148,6 @@ export default function App() {
       }}>
         <div style={{ maxWidth: 1140, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between",
           flexWrap: isMobile ? "wrap" : "nowrap", minHeight: 56, rowGap: 0, padding: isMobile ? "8px 0 0" : 0 }}>
-
-          {/* Logo (sin texto: el espacio es para el menú) */}
-          <div title="Logistics and Services" style={{ width: 32, height: 32, borderRadius: 8, background: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <svg width="17" height="17" viewBox="0 0 18 18" fill="none">
-              <rect x="2" y="3" width="14" height="2" rx="1" fill="white"/>
-              <rect x="2" y="8" width="14" height="2" rx="1" fill="white"/>
-              <rect x="2" y="13" width="9" height="2" rx="1" fill="white"/>
-            </svg>
-          </div>
 
           {/* Navegación de pestañas */}
           <nav style={{ display: "flex", gap: 4, alignItems: "center",
@@ -162,6 +175,34 @@ export default function App() {
                 </button>
               );
             })}
+            {admon.length > 0 && (
+              <div style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                <button onClick={() => setMenuAdmon(m => !m)} aria-expanded={menuAdmon}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "6px 10px" : "7px 14px", fontSize: isMobile ? 11 : 12,
+                    fontWeight: enAdmon ? 700 : 500, border: enAdmon ? "1px solid #0F6E56" : "1px solid #E2EDE9", borderRadius: 9, whiteSpace: "nowrap",
+                    background: enAdmon ? "#0F6E56" : "#fff", color: enAdmon ? "#fff" : "#6B8F80", cursor: "pointer" }}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ color: enAdmon ? "#fff" : "#9CB8AE" }}><circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+                  Admon{enAdmon ? ` · ${admon.find(o => o.id === vista)?.label}` : ""}
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ transform: menuAdmon ? "rotate(180deg)" : "none", transition: "transform .15s" }}><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+                {menuAdmon && (
+                  <div style={{ position: isMobile ? "fixed" : "absolute", top: isMobile ? 110 : "calc(100% + 6px)", left: isMobile ? 12 : 0, right: isMobile ? 12 : "auto", zIndex: 50,
+                    minWidth: 280, background: "#fff", border: "1px solid #E2EDE9", borderRadius: 12, boxShadow: "0 16px 40px rgba(10,30,24,0.16)", padding: 6 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#9CB8AE", textTransform: "uppercase", letterSpacing: ".08em", padding: "6px 10px 4px" }}>Administración · solo administrador</div>
+                    {admon.map(o => (
+                      <button key={o.id} onClick={() => { setVista(o.id); setMenuAdmon(false); }}
+                        style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: 8,
+                          background: vista === o.id ? "#EAF7F1" : "transparent", cursor: "pointer" }}
+                        onMouseEnter={e => { if (vista !== o.id) e.currentTarget.style.background = "#F7FCF9"; }}
+                        onMouseLeave={e => { if (vista !== o.id) e.currentTarget.style.background = "transparent"; }}>
+                        <span style={{ fontSize: 16, lineHeight: "20px" }}>{o.icono}</span>
+                        <span><span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1a2e27" }}>{o.label}</span>
+                          <span style={{ display: "block", fontSize: 11, color: "#6B8F80" }}>{o.descripcion}</span></span>
+                      </button>))}
+                  </div>
+                )}
+              </div>
+            )}
           </nav>
 
           {/* Usuario + regreso a la plataforma */}
@@ -199,7 +240,11 @@ export default function App() {
         {vista === "solicitudes" && <Solicitudes isMobile={isMobile} />}
         {vista === "inventario" && <InventarioPasillos isMobile={isMobile} />}
         {vista === "clientes"   && <Clientes />}
-        {vista === "utilidades" && <Utilidades isMobile={isMobile} />} {/* ── NUEVO */}
+        {vista === "historico"  && <Historico />}
+        {/* Menú Admon (solo administrador) */}
+        {vista === "utilidades" && esAdmin && <Utilidades isMobile={isMobile} />}
+        {vista === "parametros" && esAdmin && <ParametrosTomaPedido />}
+        {vista === "admin_bd"   && esAdmin && <AdminBaseDatos />}
       </div>
 
     </div>

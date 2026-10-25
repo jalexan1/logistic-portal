@@ -5,6 +5,8 @@ import { radicarSolicitud, nuevaLlave, obtenerLineas } from "../services/solicit
 import { cargarItemsEan, eanDeSku, cargarCiudades, departamentoDeCiudad } from "../services/maestrosService";
 import { normalizarLinea, descargarExcelPlantilla } from "../services/excelDespachoService";
 import { leerPlantillaPedido, compararConMaestro, resolverNit, URL_PLANTILLA } from "../services/plantillaPedidoExcel";
+import { validarAdjuntos, subirAdjuntos, tamanoLegible } from "../services/adjuntosService";
+import { cargarParametros, PARAMETROS_DEFECTO } from "../services/parametrosService";
 import BuscadorMaestro from "./BuscadorMaestro";
 import { leerModeloNoviembre2026, normalizarSku, NOMBRE_MODELO_NOVIEMBRE_2026 } from "../services/pdfModeloNoviembre2026";
 import { fechaHoraBogota } from "../utils/fechas";
@@ -252,6 +254,18 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const [cargandoExcel, setCargandoExcel] = useState(false);
   const [dragExcel, setDragExcel] = useState(false);
   const excelInputRef = useRef(null);
+  // Adjuntos del pedido (.zip, imágenes, QR): se suben al radicar
+  const [adjuntos, setAdjuntos] = useState([]);
+  const [adjSubidos, setAdjSubidos] = useState(false);
+  const [paramAdj, setParamAdj] = useState(PARAMETROS_DEFECTO);
+  const adjInputRef = useRef(null);
+  useEffect(() => { cargarParametros().then(setParamAdj).catch(() => {}); }, []);
+  const agregarAdjuntos = (lista) => {
+    const { validos, errores } = validarAdjuntos([...lista], adjuntos, paramAdj);
+    if (validos.length) { setAdjuntos(prev => [...prev, ...validos]); setAdjSubidos(false); }
+    if (errores.length && showToast) showToast("⚠ " + errores.join(" · "));
+    if (adjInputRef.current) adjInputRef.current.value = "";
+  };
   const [modeloLeido, setModeloLeido] = useState(""); // modelo de lectura usado (original / modelo_noviembre_2026)
   const valorAlEntrar = useRef("");                  // valor de la celda al entrar (para saber si cambió)
   const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
@@ -663,6 +677,12 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     const fechaFinal = fechaHoraBogota(radicada.radicadaAt);
     const metaFinal = { solicitud: solicitudFinal, fecha: fechaFinal, area: meta.area, proceso: meta.proceso, solicitante: meta.solicitante, esReintento: radicada.esReintento };
     setPdfMeta(metaFinal);
+    // Adjuntos (.zip, imágenes, QR): si fallan, la solicitud igual queda radicada
+    if (adjuntos.length && !adjSubidos) {
+      const { subidos, errores } = await subirAdjuntos(radicada.id, adjuntos);
+      if (subidos) setAdjSubidos(true);
+      if (showToast) showToast(errores.length ? `⚠ Adjuntos: ${subidos} de ${adjuntos.length} cargados. ${errores.join(" · ")}` : `📎 ${subidos} adjunto${subidos !== 1 ? "s" : ""} cargado${subidos !== 1 ? "s" : ""}`);
+    }
     if (onRadicada) onRadicada();   // refresca la tabla de solicitudes del día
 
     // ── Un solo Excel con el formato de la plantilla (con lo guardado en la base)
@@ -672,7 +692,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
 
-  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); setNoMaestro(null); setInconsist(null); setOrigenCarga("PDF"); if (pdfInputRef.current) pdfInputRef.current.value = ""; if (excelInputRef.current) excelInputRef.current.value = ""; };
+  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); setNoMaestro(null); setInconsist(null); setOrigenCarga("PDF"); setAdjuntos([]); setAdjSubidos(false); if (pdfInputRef.current) pdfInputRef.current.value = ""; if (excelInputRef.current) excelInputRef.current.value = ""; };
 
   // Columnas de la grilla (mismo orden de la plantilla). lupa: abre el buscador del maestro.
   const PREVIEW_COLS = [
@@ -765,6 +785,30 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
                 : (<><div style={{ fontSize:13, fontWeight:500, color:"#1a2e27", marginBottom:4 }}>Arrastre aquí el PDF del pedido</div><div style={{ fontSize:11, color:"#6B8F80", marginBottom:12 }}>Lee el PDF · busca el cliente en el maestro · arma las líneas</div><div style={{ display:"inline-block", padding:"7px 18px", background:"#0F6E56", color:"#fff", borderRadius:8, fontSize:12, fontWeight:500 }}>Seleccionar PDF</div></>)}
             </div>
           </div>
+        </div>
+        {/* Adjuntos del pedido: aplican al pedido cargado por Excel o por PDF */}
+        <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); agregarAdjuntos(e.dataTransfer.files); }}
+          style={{ border:"1px solid #E2EDE9", borderRadius:10, padding:"10px 14px", marginBottom:14, background:"#FBFDFC" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:"#1a2e27" }}>📎 Adjuntos del pedido <span style={{ fontWeight:400, color:"#6B8F80" }}>(opcional · Excel o PDF)</span></div>
+              <div style={{ fontSize:11, color:"#6B8F80" }}>Archivos .zip, imágenes y QR · {(paramAdj.adjuntos_tipos || []).join(", ")} · máximo {paramAdj.adjuntos_max_archivos} archivos de {paramAdj.adjuntos_max_mb} MB · se guardan con la solicitud al radicar (se conservan {paramAdj.adjuntos_retencion_meses} mes en la aplicación)</div>
+            </div>
+            <input ref={adjInputRef} type="file" multiple accept={(paramAdj.adjuntos_tipos || []).map(t => "." + t).join(",")} style={{ display:"none" }} onChange={e => agregarAdjuntos(e.target.files)} />
+            <button type="button" onClick={() => adjInputRef.current?.click()} disabled={solicitudYaGenerada}
+              style={{ height:32, padding:"0 14px", fontSize:12, fontWeight:600, border:"1px solid #C5DDD4", borderRadius:8, background:"#fff", color:"#0F6E56", cursor:"pointer", whiteSpace:"nowrap" }}>+ Agregar adjuntos</button>
+          </div>
+          {adjuntos.length > 0 && (
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>
+              {adjuntos.map((f, i) => (
+                <span key={`${f.name}-${i}`} style={{ display:"inline-flex", alignItems:"center", gap:6, fontSize:11.5, color:"#1a2e27", background:"#EAF7F1", border:"1px solid #C5DDD4", borderRadius:20, padding:"3px 6px 3px 10px" }}>
+                  {f.name} <span style={{ color:"#6B8F80" }}>{tamanoLegible(f.size)}</span>
+                  {!adjSubidos && <button type="button" onClick={() => setAdjuntos(prev => prev.filter((_, k) => k !== i))} aria-label={`Quitar ${f.name}`}
+                    style={{ width:18, height:18, border:"none", borderRadius:9, background:"#fff", color:"#C0392B", cursor:"pointer", fontSize:12, lineHeight:"18px", padding:0 }}>×</button>}
+                  {adjSubidos && <span style={{ color:"#0F6E56" }}>✓</span>}
+                </span>))}
+            </div>
+          )}
         </div>
         {error && <div style={{ background: error.startsWith("⚠") ? "#FFFBEB" : "#FFF5F5", border: `1px solid ${error.startsWith("⚠") ? "#F6D860" : "#F5A0A0"}`, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color: error.startsWith("⚠") ? "#92600A" : "#C0392B", lineHeight:1.5 }}>{error}</div>}
         {pdfRows.length > 0 && (

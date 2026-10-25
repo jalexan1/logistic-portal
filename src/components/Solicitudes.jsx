@@ -19,7 +19,6 @@
 // Lectura desde despachos.vw_solicitud_lineas (RLS aplica según el rol).
 // ─────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
 import { useAuth } from "./auth/authContext";
 import {
   listarLineasSolicitudes, obtenerEventos,
@@ -28,7 +27,8 @@ import {
 import { COLUMNAS_LINEAS, filtrarLineas, valorCelda } from "../utils/tablaLineas";
 import Paginador from "./Paginador";
 import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
-import { normalizarLinea, descargarArchivosDespacho, hojaDespacho, hojaWms, hojaLibro1 } from "../services/excelDespachoService";
+import { descargarExcelBloque } from "../services/excelDespachoService";
+import { cargarParametros, diasRango, PARAMETROS_DEFECTO } from "../services/parametrosService";
 
 // Estados vigentes (los que se pueden filtrar y asignar)
 const ESTADO_UI = {
@@ -45,48 +45,14 @@ const ESTADO_HISTORICO = {
 const uiEstado = (codigo, nombre) =>
   ESTADO_UI[codigo] || ESTADO_HISTORICO[codigo] || { label: nombre || codigo, color: "#44574F", bg: "#F2F8F5" };
 
-const hace = (dias) => { const d = new Date(); d.setDate(d.getDate() - dias); return isoFechaBogota(d); };
 const num = (n) => Number(n || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 });
 const plural = (n, uno, varios) => `${num(n)} ${Number(n) === 1 ? uno : varios}`;
 
-// ── Excel consolidado del bloque ──────────────────────────────────────────
-// Mismo formato de las descargas por solicitud (excelDespachoService), con
-// TODAS las líneas del bloque:
-//   Hoja "Despacho"        → plantilla completa + N° de solicitud
-//   Hoja "CARGA A WMS"     → lo que se sube al WMS
-//   Hoja "CARGA LIBRO 1"   → una fila por entrega (artículos y unidades)
-//   Hoja "Solicitudes del bloque" → qué solicitudes entraron y sus totales
+// ── Excel consolidado del bloque (fase 7) ────────────────────────────────
+// UN archivo despachos_bloque_<LOT>.xlsx con 4 hojas:
+//   DESPACHO · CARGA A WMS · CARGA LIBRO 1 · TABLERO CONTROL
 function generarExcelLote(lote, lineasBase) {
-  const lineas = lineasBase.map(l => normalizarLinea(l));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, hojaDespacho(lineas, { conSolicitud: true }), "Despacho");
-  XLSX.utils.book_append_sheet(wb, hojaWms(lineas), "CARGA A WMS");
-  XLSX.utils.book_append_sheet(wb, hojaLibro1(lineas), "CARGA LIBRO 1");
-
-  const porSol = new Map();
-  lineasBase.forEach(l => {
-    const s = porSol.get(l.solicitud_id) || { ...l, lineas: 0, unidades: 0 };
-    s.lineas += 1; s.unidades += Number(l.cantidad);
-    porSol.set(l.solicitud_id, s);
-  });
-  const sols = [...porSol.values()];
-  const ws2 = XLSX.utils.aoa_to_sheet([
-    ["Bloque", lote.numero],
-    ["Procesado el", fechaHoraBogota(lote.procesadoAt)],
-    ["Procesado por", lote.procesadoPor || ""],
-    ["Comentario", lote.comentario || ""],
-    ["Solicitudes", sols.length],
-    ["Líneas", lineasBase.length],
-    ["Unidades", sols.reduce((a, s) => a + s.unidades, 0)],
-    [],
-    ["N° solicitud", "Radicada el", "Área", "Solicitante", "Origen", "Pedido origen", "Líneas", "Unidades"],
-    ...sols.map(s => [s.solicitud_numero, fechaHoraBogota(s.radicada_at), s.area_solicitante, s.solicitante_nombre,
-      s.origen === "PDF" ? "PDF" : "Manual", s.numero_pedido_origen || "", s.lineas, s.unidades]),
-  ]);
-  ws2["!cols"] = [{wch:18},{wch:18},{wch:20},{wch:28},{wch:10},{wch:16},{wch:9},{wch:11}];
-  XLSX.utils.book_append_sheet(wb, ws2, "Solicitudes del bloque");
-
-  XLSX.writeFile(wb, `despachos_bloque_${lote.numero}.xlsx`);
+  descargarExcelBloque(lote.numero, lineasBase);
 }
 
 // Casilla de selección. Se dibuja a mano porque index.css quita la apariencia
@@ -121,12 +87,14 @@ export default function Solicitudes({ isMobile }) {
   const veBloques = !esSolicitante;
 
   // Quien procesa abre la bandeja en "Radicada": lo pendiente por procesar
-  const [filtros, setFiltros] = useState({ desde: hace(30), hasta: isoFechaBogota(new Date()), estado: puedeOperar ? "RADICADA" : "" });
+  // Fase 7: arranca SOLO con el día de hoy. Máximo N días (parámetro); más → Histórico.
+  const [filtros, setFiltros] = useState({ desde: isoFechaBogota(new Date()), hasta: isoFechaBogota(new Date()), estado: puedeOperar ? "RADICADA" : "" });
+  const [maxDias, setMaxDias] = useState(PARAMETROS_DEFECTO.solicitudes_rango_max_dias);
+  useEffect(() => { cargarParametros().then(p => setMaxDias(Number(p.solicitudes_rango_max_dias) || 7)).catch(() => {}); }, []);
   const [datos, setDatos]     = useState([]);       // UNA FILA POR LÍNEA (vw_solicitud_lineas)
   const [cargando, setCargando] = useState(false);
   const [error, setError]     = useState("");
   const [toast, setToast]     = useState("");
-  const [bajando, setBajando] = useState(null);     // solicitud_id descargando
   const [historial, setHistorial] = useState(null); // { sol, eventos | null }
 
   // Filtros por columna + paginación (5, 10, 15, 30, 50, 80, 150 · arranca en 10)
@@ -152,9 +120,12 @@ export default function Solicitudes({ isMobile }) {
 
   const aviso = (m) => { setToast(m); setTimeout(() => setToast(""), 4000); };
   const rangoInvalido = Boolean(filtros.desde && filtros.hasta && filtros.desde > filtros.hasta);
+  const rangoExcedido = !rangoInvalido && Boolean(filtros.desde && filtros.hasta) && diasRango(filtros.desde, filtros.hasta) > maxDias;
+  const msgExcedido = `Esta pantalla consulta máximo ${maxDias} días. Para consultas de más de ${maxDias} días use la pantalla Histórico (menú «Histórico»).`;
 
   const cargar = useCallback(async () => {
     if (rangoInvalido) { setDatos([]); setError("La fecha «Desde» no puede ser posterior a «Hasta»."); return; }
+    if (rangoExcedido) { setDatos([]); setError(msgExcedido); return; }
     setCargando(true); setError("");
     try {
       const filas = await listarLineasSolicitudes({ desde: filtros.desde, hasta: filtros.hasta, estado: filtros.estado });
@@ -165,15 +136,15 @@ export default function Solicitudes({ isMobile }) {
     }
     catch (e) { setError(e.message); }
     finally { setCargando(false); }
-  }, [filtros, rangoInvalido]);
+  }, [filtros, rangoInvalido, rangoExcedido, msgExcedido]);
 
   const cargarLotes = useCallback(async () => {
-    if (!veBloques) return;
+    if (!veBloques || rangoInvalido || rangoExcedido) { setLotes([]); return; }
     setCargandoLotes(true);
     try { setLotes(await listarLotes({ desde: filtros.desde, hasta: filtros.hasta })); }
     catch (e) { aviso("⚠ " + e.message); }
     finally { setCargandoLotes(false); }
-  }, [filtros.desde, filtros.hasta, veBloques]);
+  }, [filtros.desde, filtros.hasta, veBloques, rangoInvalido, rangoExcedido]);
 
   useEffect(() => { cargar(); }, [cargar]);
   useEffect(() => { if (verLotes) cargarLotes(); }, [verLotes, cargarLotes]);
@@ -210,18 +181,6 @@ export default function Solicitudes({ isMobile }) {
     lineas: filtradas.length,
     unidades: filtradas.reduce((a, f) => a + Number(f.cantidad || 0), 0),
   }), [filtradas]);
-
-  // Los 3 archivos de la solicitud (todas sus líneas, aunque haya filtros)
-  const descargarExcel = async (solicitudId) => {
-    const sol = solicitudes.get(solicitudId);
-    if (!sol) return;
-    setBajando(solicitudId);
-    try {
-      const lineas = datos.filter(d => d.solicitud_id === solicitudId).map(d => normalizarLinea(d));
-      await descargarArchivosDespacho({ area: sol.area_solicitante, numero: sol.numero, lineas });
-    } catch (e) { aviso("⚠ " + e.message); }
-    finally { setBajando(null); }
-  };
 
   const verHistorial = async (solicitudId) => {
     const sol = solicitudes.get(solicitudId);
@@ -348,8 +307,8 @@ export default function Solicitudes({ isMobile }) {
       {/* Rango y estado (consultan la base) */}
       <div style={{ background: "#fff", border: "1px solid #E2EDE9", borderRadius: 14, padding: isMobile ? 12 : "14px 18px", marginBottom: 14,
         display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 2fr", gap: 10, alignItems: "end" }}>
-        <label style={lbl}>Desde<input type="date" value={filtros.desde} max={filtros.hasta || undefined} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} style={campo} /></label>
-        <label style={lbl}>Hasta<input type="date" value={filtros.hasta} min={filtros.desde || undefined} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} style={campo} /></label>
+        <label style={lbl}>Desde <span style={{ color: "#9CB8AE", fontWeight: 400 }}>(mes/día/año)</span><input type="date" value={filtros.desde} max={filtros.hasta || undefined} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} style={campo} /></label>
+        <label style={lbl}>Hasta <span style={{ color: "#9CB8AE", fontWeight: 400 }}>(mes/día/año)</span><input type="date" value={filtros.hasta} min={filtros.desde || undefined} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} style={campo} /></label>
         <label style={lbl}>Estado
           <select value={filtros.estado} onChange={e => setFiltros(f => ({ ...f, estado: e.target.value }))} style={campo}>
             <option value="">Todos</option>
@@ -357,7 +316,7 @@ export default function Solicitudes({ isMobile }) {
           </select>
         </label>
         <div style={{ fontSize: 11, color: "#6B8F80", gridColumn: isMobile ? "span 2" : "auto", lineHeight: 1.4 }}>
-          Filtre cada columna en la fila «Filtrar…» de la tabla. Escriba parte del texto o use <b>*</b> como comodín (ej. <b>bell*group</b>, <b>PTC*2025</b>).
+          Carga el día de hoy; máximo <b>{maxDias} días</b> por consulta (más: menú <b>Histórico</b>). Filtre cada columna en la fila «Filtrar…»; use <b>*</b> como comodín (ej. <b>bell*group</b>).
         </div>
       </div>
 
@@ -453,8 +412,6 @@ export default function Solicitudes({ isMobile }) {
                         <td style={{ ...tdC, borderTop: bordeSup, textAlign: "center", overflow: "visible" }}>
                           {primeraDeSolicitud && (
                             <span style={{ display: "inline-flex", gap: 5 }}>
-                              <button onClick={() => descargarExcel(f.solicitud_id)} disabled={bajando === f.solicitud_id} title={`Descargar despacho_, CARGA A WMS_ y CARGA LIBRO 1_ de ${f.numero}`}
-                                style={{ ...btnFila, cursor: bajando === f.solicitud_id ? "wait" : "pointer" }}>{bajando === f.solicitud_id ? "…" : "⬇ .xlsx"}</button>
                               <button onClick={() => verHistorial(f.solicitud_id)} title={`Línea de tiempo de ${f.numero}`} style={btnFila}>🕑</button>
                               {puedeOperar && esRadicada && (
                                 <button onClick={() => abrirBloque([solicitudes.get(f.solicitud_id)])} title={`Procesar solo ${f.numero}`}

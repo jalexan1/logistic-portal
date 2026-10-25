@@ -12,6 +12,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { listarSolicitudes, obtenerLineas } from "../services/solicitudesService";
 import { normalizarLinea, descargarExcelPlantilla } from "../services/excelDespachoService";
+import { listarAdjuntos } from "../services/adjuntosService";
+import AdjuntosBoton from "./AdjuntosBoton";
 import { fechaHoraBogota, horaBogota, isoFechaBogota } from "../utils/fechas";
 
 const ESTADO_UI = {
@@ -30,6 +32,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [bajando, setBajando] = useState(null);
+  const [adjuntos, setAdjuntos] = useState({});   // solicitud_id → adjuntos (📎)
 
   const esHoy = desde === hoy() && hasta === hoy();
   const rangoInvalido = Boolean(desde && hasta && desde > hasta);
@@ -37,7 +40,11 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
   const cargar = useCallback(async () => {
     if (rangoInvalido) { setDatos([]); setError("La fecha «Desde» no puede ser posterior a «Hasta»."); return; }
     setCargando(true); setError("");
-    try { setDatos(await listarSolicitudes({ desde, hasta, limite: 500 })); }
+    try {
+      const filas = await listarSolicitudes({ desde, hasta, limite: 500 });
+      setDatos(filas);
+      try { setAdjuntos(await listarAdjuntos(filas.map(f => f.id))); } catch { setAdjuntos({}); }
+    }
     catch (e) { setError(e.message); }
     finally { setCargando(false); }
   }, [desde, hasta, rangoInvalido]);
@@ -120,6 +127,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                 <th style={{ ...th, textAlign: "right" }}>Unidades</th>
                 <th style={th}>Estado</th>
                 <th style={{ ...th, textAlign: "center" }}>Excel</th>
+                <th style={{ ...th, textAlign: "center" }}>Adjuntos</th>
               </tr>
             </thead>
             <tbody>
@@ -144,6 +152,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                         {bajando === sol.id ? "…" : "⬇ .xlsx"}
                       </button>
                     </td>
+                    <td style={{ ...td, textAlign: "center" }}><AdjuntosBoton adjuntos={adjuntos[sol.id] || []} numero={sol.numero} onError={showToast} /></td>
                   </tr>
                 );
               })}

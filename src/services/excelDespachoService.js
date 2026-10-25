@@ -170,3 +170,36 @@ export function descargarExcelPlantilla({ area, numero, lineas }) {
   XLSX.writeFile(libro(hojaPlantilla(lineas), "Plantilla"), nombre);
   return nombre;
 }
+
+// ── Excel de bloque / histórico: UN archivo con 4 hojas (fase 7) ─────────
+//   DESPACHO · CARGA A WMS · CARGA LIBRO 1 · TABLERO CONTROL
+// TABLERO CONTROL: una fila por línea del pedido (FACTURA = Entrega).
+const COLUMNAS_TABLERO = [
+  ["FECHA Y HORA", "fechaHora", 17], ["FACTURA", "entrega", 16], ["NIT", "nit", 14],
+  ["NOMBRE", "nombre", 32], ["SKU", "sku", 16], ["CANTIDAD", "cantidad", 10],
+  ["DIRECCION", "direccion", 30], ["TELEFONO", "telefono", 15], ["CIUDAD", "ciudad", 16],
+  ["DEPARTAMENTO", "departamento", 16],
+];
+export function hojaTablero(lineas) {
+  const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_TABLERO.map(c => c[0]), ...lineas.map(l => COLUMNAS_TABLERO.map(c => l[c[1]] ?? ""))]);
+  ws["!cols"] = COLUMNAS_TABLERO.map(c => ({ wch: c[2] }));
+  return ws;
+}
+
+/** Libro con las 4 hojas a partir de líneas de la base (vw_lote_lineas / vw_solicitud_lineas). */
+export function libroBloque(lineasBase) {
+  const lineas = lineasBase.map(l => normalizarLinea(l));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, hojaDespacho(lineas, { conSolicitud: true }), "DESPACHO");
+  XLSX.utils.book_append_sheet(wb, hojaWms(lineas), "CARGA A WMS");
+  XLSX.utils.book_append_sheet(wb, hojaLibro1(lineas), "CARGA LIBRO 1");
+  XLSX.utils.book_append_sheet(wb, hojaTablero(lineas), "TABLERO CONTROL");
+  return wb;
+}
+
+/** despachos_bloque_<LOT>.xlsx (mismo nombre de siempre). */
+export function descargarExcelBloque(numeroLote, lineasBase) {
+  const nombre = `despachos_bloque_${numeroLote}.xlsx`;
+  XLSX.writeFile(libroBloque(lineasBase), nombre);
+  return nombre;
+}

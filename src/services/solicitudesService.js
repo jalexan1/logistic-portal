@@ -185,3 +185,22 @@ export function mensajeError(error) {
   if (/permission denied|42501/i.test(msg)) return "No tiene permisos para esta operación.";
   return msg;
 }
+
+// ── Fase 7: consultas por rango paginadas (Solicitudes / Histórico) ──────
+/** Solicitudes (encabezado) del rango, paginando de a 1000 (límite del API). */
+export async function listarSolicitudesRango({ desde, hasta, estado, tope = 20000 } = {}) {
+  const PAGINA = 1000, todas = [];
+  for (let ini = 0; ini < tope; ini += PAGINA) {
+    let q = despachos().from("vw_solicitudes")
+      .select("id,numero,estado_codigo,estado_nombre,origen,area_solicitante,proceso,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,lote_id,lote_numero,procesada_at")
+      .order("radicada_at", { ascending: false }).range(ini, ini + PAGINA - 1);
+    if (desde) q = q.gte("fecha_radicacion", desde);
+    if (hasta) q = q.lte("fecha_radicacion", hasta);
+    if (estado) q = q.eq("estado_codigo", estado);
+    const { data, error } = await q;
+    if (error) throw new Error(mensajeError(error));
+    todas.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return todas;
+}

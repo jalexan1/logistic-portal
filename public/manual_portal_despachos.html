@@ -188,6 +188,7 @@
       <li><a href="#s10">Nueva solicitud y botón Limpiar</a></li>
       <li><a href="#s11">Botón Manual</a></li>
       <li><a href="#s12">Preguntas frecuentes</a></li>
+      <li><a href="#s13">Política de documentos (adjuntos)</a></li>
     </ol>
   </div>
 
@@ -451,6 +452,35 @@
       <div class="faq-q">¿Qué significa el campo UM?</div>
       <div class="faq-a">UM significa Unidad de Medida. Su valor por defecto es BUL (bulto). Si tu operación usa otra unidad, puedes modificarlo directamente en la celda correspondiente.</div>
     </div>
+  </div>
+
+  <!-- SECCIÓN 13 -->
+  <div class="section" id="s13">
+    <div class="section-title"><span class="num">13</span> Política de Documentos (adjuntos)</div>
+    <p>Al radicar un pedido desde <b>Carga de pedidos</b> (plantilla Excel o PDF) se pueden agregar <b>adjuntos</b>: archivos <b>.zip</b>, <b>imágenes</b> y <b>códigos QR</b>.
+       Los adjuntos quedan guardados con la solicitud y se descargan con el botón 📎 en la tabla <b>Solicitudes de hoy</b> (al lado del Excel) y en la pantalla <b>Histórico</b>.</p>
+
+    <h3>Alcance</h3>
+    <table style="width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:14px;">
+      <tr style="background:var(--green-light);"><th style="text-align:left; padding:8px 10px; border:1px solid var(--border);">Documento</th><th style="text-align:left; padding:8px 10px; border:1px solid var(--border);">Tiempo en la aplicación</th><th style="text-align:left; padding:8px 10px; border:1px solid var(--border);">Respaldo en disco duro</th><th style="text-align:left; padding:8px 10px; border:1px solid var(--border);">Destino final</th></tr>
+      <tr><td style="padding:8px 10px; border:1px solid var(--border);">Todos los adjuntos: archivos .zip, imágenes y QR</td><td style="padding:8px 10px; border:1px solid var(--border);"><b>1 mes</b></td><td style="padding:8px 10px; border:1px solid var(--border);"><b>1 año</b></td><td style="padding:8px 10px; border:1px solid var(--border);">Destrucción</td></tr>
+    </table>
+
+    <h3>Reglas</h3>
+    <ul style="margin:0 0 12px 20px;">
+      <li>En las pantallas <b>Solicitudes</b>, <b>Bloques procesados</b> e <b>Histórico</b> los adjuntos se mantienen disponibles <b>solo un mes</b>.</li>
+      <li>Cumplido el mes, el <b>administrador del sistema</b> pasa los adjuntos a un <b>respaldo en disco duro</b> (menú <b>Admon → Administración BD y adjuntos</b>) y los elimina de la aplicación.</li>
+      <li>En el disco duro la información se conserva durante <b>un año</b>. Después de un año se <b>destruye</b>.</li>
+      <li>Si necesita un adjunto que ya salió de la aplicación, solicítelo al administrador del sistema dentro del año de conservación.</li>
+      <li>Límites vigentes (los define el administrador en <b>Admon → Parámetros TomaPedido</b>): tamaño máximo por archivo (5 MB por defecto), cantidad de archivos por solicitud y tipos permitidos.</li>
+    </ul>
+
+    <h3>Consultas de información</h3>
+    <ul style="margin:0 0 12px 20px;">
+      <li><b>Solicitudes</b>: carga el día de hoy y permite consultar hasta <b>7 días</b>.</li>
+      <li><b>Histórico</b> (supervisor y administrador): hasta <b>un mes</b> por consulta; puede tardar varios minutos.</li>
+      <li>Información de <b>más de un mes</b>: se solicita al administrador del sistema, que la consulta directamente en la base de datos.</li>
+    </ul>
   </div>
 
 </div>
