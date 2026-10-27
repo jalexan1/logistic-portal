@@ -61,7 +61,7 @@ const btnSecundario = { height: 36, padding: "0 14px", fontSize: 13, fontWeight:
 
 // ── Formulario «Crear cliente nuevo» ─────────────────────────────────────
 function CrearCliente({ inicial, onCreado, onVolver }) {
-  const [d, setD] = useState({ nit: "", nombre: "", direccion: "", ciudad: "", departamento: "", ...inicial });
+  const [d, setD] = useState({ nit: "", nombre: "", direccion: "", telefono: "", ciudad: "", departamento: "", ...inicial });
   const [error, setError] = useState("");
   const [faltan, setFaltan] = useState({});
   const [guardando, setGuardando] = useState(false);
@@ -80,7 +80,7 @@ function CrearCliente({ inicial, onCreado, onVolver }) {
 
   const guardar = async (e) => {
     e.preventDefault();
-    const req = ["nit", "nombre", "direccion", "ciudad", "departamento"];
+    const req = ["nit", "nombre", "direccion", "telefono", "ciudad", "departamento"];
     const f = Object.fromEntries(req.map(k => [k, !String(d[k] || "").trim()]));
     if (Object.values(f).some(Boolean)) { setFaltan(f); setError("Complete los campos marcados en amarillo."); return; }
     setGuardando(true); setError("");
@@ -102,7 +102,10 @@ function CrearCliente({ inicial, onCreado, onVolver }) {
         <label style={etiqueta}>NIT *<input ref={primero} value={d.nit} onChange={e => cambiar("nit", e.target.value)} placeholder="Sin puntos ni guion" style={input("nit")} /></label>
         <label style={etiqueta}>Nombre *<input value={d.nombre} onChange={e => cambiar("nombre", e.target.value)} style={input("nombre")} /></label>
       </div>
-      <label style={{ ...etiqueta, marginBottom: 10 }}>Dirección *<input value={d.direccion} onChange={e => cambiar("direccion", e.target.value)} placeholder="CRA 45 # 35 27" style={input("direccion")} /></label>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginBottom: 10 }}>
+        <label style={etiqueta}>Dirección *<input value={d.direccion} onChange={e => cambiar("direccion", e.target.value)} placeholder="CRA 45 # 35 27" style={input("direccion")} /></label>
+        <label style={etiqueta}>Teléfono *<input value={d.telefono || ""} inputMode="tel" onChange={e => cambiar("telefono", e.target.value)} placeholder="3001234567" style={input("telefono")} /></label>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <label style={etiqueta}>Ciudad *<input value={d.ciudad} onChange={e => cambiar("ciudad", e.target.value)} placeholder="MEDELLÍN" style={input("ciudad")} /></label>
         <label style={etiqueta}>Departamento *<input value={d.departamento} onChange={e => cambiar("departamento", e.target.value)} placeholder="Se llena con la ciudad" style={input("departamento")} /></label>

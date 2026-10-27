@@ -87,12 +87,15 @@ export function leerPlantillaPedido(arrayBuffer) {
 /**
  * NIT tal como está en el maestro. Algunos NIT se guardaron con el dígito de
  * verificación pegado (901443866 → 9014438660): si el exacto no existe, se
- * acepta el que solo agrega un dígito al final. "" si no existe.
+ * acepta el que solo agrega un dígito al final (solo NIT de 9+ dígitos; los
+ * códigos de tienda cortos se comparan exactos). "" si no existe.
  */
 export function resolverNit(maestro, nit) {
   const n = String(nit || "").trim();
   if (!n) return "";
   if (maestro[n]) return n;
+  // Solo NIT de 9+ dígitos: un código de tienda corto ("7") nunca toma otro ("70")
+  if (!/^\d{9,}$/.test(n)) return "";
   const conDv = Object.keys(maestro).filter(k => k.length === n.length + 1 && k.startsWith(n));
   return conDv.length === 1 ? conDv[0] : "";
 }

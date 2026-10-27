@@ -19,10 +19,12 @@ import {
 import { cargarCiudades, departamentoDeCiudad } from "../services/maestrosService";
 import { cargarDestinatarios } from "../services/clientesService";
 import { coincide } from "../utils/tablaLineas";
+import CargaMasivaClientes from "./CargaMasivaClientes";
+import { descargarPlantillaClientes } from "../services/plantillaClientesExcel";
 import { fechaHoraBogota } from "../utils/fechas";
 import Paginador from "./Paginador";
 
-const ORIGEN = { MAESTRO: "Carga inicial", DESPACHOS: "Despachos", CLIENTES: "Pantalla Clientes" };
+const ORIGEN = { MAESTRO: "Carga inicial", DESPACHOS: "Despachos", CLIENTES: "Pantalla Clientes", CARGA_MASIVA: "Carga masiva" };
 const estadoCliente = (c) =>
   c.estado_revision === "RECHAZADO" ? { label: "Rechazado", color: "#C0392B", bg: "#FFF0EE" }
   : !c.activo ? { label: "Inactivo", color: "#6B7280", bg: "#F3F4F6" }
@@ -32,9 +34,10 @@ const COLUMNAS = [
   { key: "nit",          titulo: "NIT",          w: 120 },
   { key: "nombre",       titulo: "Nombre",       w: 260, fuerte: true },
   { key: "direccion",    titulo: "Dirección",    w: 220 },
+  { key: "telefono",     titulo: "Teléfono",     w: 120 },
   { key: "ciudad",       titulo: "Ciudad",       w: 130 },
   { key: "departamento", titulo: "Departamento", w: 140 },
-  { key: "telefono",     titulo: "Teléfono",     w: 120 },
+  { key: "telefono_2",   titulo: "Teléfono 2",   w: 120 },
   { key: "estado",       titulo: "Estado",       w: 100 },
   { key: "origen",       titulo: "Origen",       w: 130 },
   { key: "revision",     titulo: "Revisión",     w: 240 },
@@ -86,18 +89,21 @@ function CamposCliente({ d, setD, faltan = {} }) {
         <label style={lbl}>NIT *<input value={d.nit || ""} onChange={e => cambiar("nit", e.target.value)} style={est("nit")} /></label>
         <label style={lbl}>Nombre *<input value={d.nombre || ""} onChange={e => cambiar("nombre", e.target.value)} style={est("nombre")} /></label>
       </div>
-      <label style={{ ...lbl, marginBottom: 10 }}>Dirección *<input value={d.direccion || ""} onChange={e => cambiar("direccion", e.target.value)} style={est("direccion")} /></label>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginBottom: 10 }}>
+        <label style={lbl}>Dirección *<input value={d.direccion || ""} onChange={e => cambiar("direccion", e.target.value)} style={est("direccion")} /></label>
+        <label style={lbl}>Teléfono *<input value={d.telefono || ""} inputMode="tel" onChange={e => cambiar("telefono", e.target.value)} style={est("telefono")} /></label>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
         <label style={lbl}>Ciudad *<input value={d.ciudad || ""} onChange={e => cambiar("ciudad", e.target.value)} style={est("ciudad")} /></label>
         <label style={lbl}>Departamento *<input value={d.departamento || ""} onChange={e => cambiar("departamento", e.target.value)} style={est("departamento")} /></label>
-        <label style={lbl}>Teléfono<input value={d.telefono || ""} onChange={e => cambiar("telefono", e.target.value)} style={campo} /></label>
+        <label style={lbl}>Teléfono 2 <span style={{ color: "#9CB8AE", fontWeight: 400 }}>(opcional)</span><input value={d.telefono_2 || ""} inputMode="tel" onChange={e => cambiar("telefono_2", e.target.value)} style={campo} /></label>
       </div>
     </>
   );
 }
-const REQUERIDOS = ["nit", "nombre", "direccion", "ciudad", "departamento"];
+const REQUERIDOS = ["nit", "nombre", "direccion", "telefono", "ciudad", "departamento"];
 const faltantes = (d) => Object.fromEntries(REQUERIDOS.map(k => [k, !String(d[k] || "").trim()]));
-const cambioDatos = (a, b) => ["nit", "nombre", "direccion", "ciudad", "departamento", "telefono"]
+const cambioDatos = (a, b) => ["nit", "nombre", "direccion", "telefono", "ciudad", "departamento", "telefono_2"]
   .some(k => String(a[k] || "").trim().toUpperCase() !== String(b[k] || "").trim().toUpperCase());
 
 export default function Clientes() {
@@ -115,6 +121,7 @@ export default function Clientes() {
   const [revision, setRevision] = useState(null);   // { original, d, nota, faltan, error, guardando }
   const [edicion, setEdicion] = useState(null);     // { original|null, d, faltan, error, guardando }
   const [eliminar, setEliminar] = useState(null);   // { c, opcion, error, trabajando }
+  const [cargaMasiva, setCargaMasiva] = useState(false);
 
   const aviso = (m) => { setToast(m); setTimeout(() => setToast(""), 4000); };
 
@@ -198,7 +205,9 @@ export default function Clientes() {
             {pendientes.length} por revisar · {maestro.filter(c => c.activo).length.toLocaleString("es-CO")} activos · {maestro.filter(c => !c.activo).length.toLocaleString("es-CO")} inactivos
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={descargarPlantillaClientes} title="Plantilla Excel: NIT, NOMBRE, DIRECCION, TELEFONO, CIUDAD, DEPARTAMENTO, TELEFONO 2" style={{ ...btn, height: 36 }}>⬇ Plantilla clientes</button>
+          <button onClick={() => setCargaMasiva(true)} style={{ ...btn, height: 36 }}>⬆ Carga masiva</button>
           <button onClick={() => setEdicion({ original: null, d: {}, faltan: {}, error: "", guardando: false })} style={{ ...btnPri, height: 36 }}>➕ Nuevo cliente</button>
           <button onClick={cargar} disabled={cargando} style={{ ...btn, height: 36 }}>↻ Actualizar</button>
         </div>
@@ -358,6 +367,8 @@ export default function Clientes() {
           </div>
         </Modal>
       )}
+
+      {cargaMasiva && <CargaMasivaClientes onCerrar={() => setCargaMasiva(false)} onCargado={(msg) => refrescar(msg)} />}
 
       {toast && <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", zIndex: 2100, background: "#1a2e27", color: "#fff", padding: "10px 20px", borderRadius: 24, fontSize: 13, fontWeight: 500, maxWidth: "90vw" }}>{toast}</div>}
     </div>

@@ -32,7 +32,7 @@ export async function crearClienteDespachos({ nit, nombre, direccion, ciudad, de
   return c;
 }
 
-const COLUMNAS = "id,nit,nombre,direccion,ciudad,departamento,telefono,activo,estado_revision,origen,creado_por_nombre,created_at,revisado_at,revisado_por_nombre,nota_revision,version";
+const COLUMNAS = "id,nit,nombre,direccion,telefono,ciudad,departamento,telefono_2,activo,estado_revision,origen,creado_por_nombre,created_at,revisado_at,revisado_por_nombre,nota_revision,version";
 
 /** Todos los clientes (paginado de a 1000, límite del API). */
 export async function listarClientes() {
@@ -48,10 +48,11 @@ export async function listarClientes() {
 }
 
 /** Crear (id null) o editar. `version` evita pisar cambios de otro usuario. */
-export async function guardarCliente({ id = null, nit, nombre, direccion, ciudad, departamento, telefono, version = null }) {
+export async function guardarCliente({ id = null, nit, nombre, direccion, ciudad, departamento, telefono, telefono_2, version = null }) {
   const { data, error } = await despachos().rpc("fn_guardar_cliente", {
     p_id: id, p_nit: nit, p_nombre: nombre, p_direccion: direccion || null, p_ciudad: ciudad || null,
     p_departamento: departamento || null, p_telefono: telefono || null, p_version: version,
+    p_telefono_2: telefono_2 || null,
   });
   if (error) throw new Error(mensajeError(error));
   return data;
@@ -72,4 +73,15 @@ export async function cambiarActivoCliente({ id, activo }) {
 export async function borrarCliente(id) {
   const { error } = await despachos().rpc("fn_borrar_cliente", { p_id: id });
   if (error) throw new Error(mensajeError(error));
+}
+
+/**
+ * Carga masiva de clientes (SQL 026). aplicar=false → simulación (no cambia nada).
+ * Devuelve [{ fila, nit, nombre, accion, detalle }]
+ * accion: CREAR | ACTUALIZAR | SIN_CAMBIOS | DUPLICADO | NO_CARGADO
+ */
+export async function cargarClientesMasivo(filas, aplicar = false) {
+  const { data, error } = await despachos().rpc("fn_cargar_clientes", { p_filas: filas, p_aplicar: aplicar });
+  if (error) throw new Error(mensajeError(error));
+  return data || [];
 }

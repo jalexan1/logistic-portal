@@ -4,6 +4,7 @@ import InventarioPasillos from "./components/InventarioPasillos";
 import Utilidades from "./components/utilidades/Utilidades"; // ── NUEVO: módulo Utilidades
 import Solicitudes from "./components/Solicitudes";
 import Clientes from "./components/Clientes";
+import Articulos from "./components/Articulos";
 import Historico from "./components/Historico";
 import ParametrosTomaPedido from "./components/admon/ParametrosTomaPedido";
 import AdminBaseDatos from "./components/admon/AdminBaseDatos";
@@ -63,21 +64,6 @@ const VISTAS = [
       </svg>
     ),
   },
-  // Maestro de clientes: solo supervisor (operador) y administrador de Despachos
-  {
-    id: "clientes",
-    label: "Clientes",
-    labelCorto: "Clientes",
-    requiere: ["DESPACHOS"],
-    rolesPermitidos: ["operador", "admin"],
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="6" cy="5" r="2.6" stroke="currentColor" strokeWidth="1.3"/>
-        <path d="M1.5 13.5c.4-2.4 2.2-3.8 4.5-3.8s4.1 1.4 4.5 3.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-        <path d="M11 3.2a2.3 2.3 0 0 1 0 4.4M12.4 9.9c1.2.5 1.9 1.7 2.1 3.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-      </svg>
-    ),
-  },
   // Histórico de solicitudes y bloques: solo supervisor (operador) y administrador
   {
     id: "historico",
@@ -94,6 +80,18 @@ const VISTAS = [
     ),
   },
 ];
+
+// ── Menú Maestros (supervisor = operador, y administrador de Despachos) ──
+const OPCIONES_MAESTROS = [
+  { id: "clientes",  label: "Clientes",  descripcion: "Maestro de clientes, revisión y carga masiva", icono: "👥" },
+  { id: "articulos", label: "Artículos", descripcion: "Item (SKU) y código EAN", icono: "📦" },
+];
+const ICONO_MAESTROS = (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="3.5" rx="5.5" ry="2" stroke="currentColor" strokeWidth="1.3"/><path d="M2.5 3.5v9c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-9M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" strokeWidth="1.3"/></svg>
+);
+const ICONO_ADMON = (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+);
 
 // ── Menú Admon (solo administrador): irá creciendo con más opciones ──
 const OPCIONES_ADMON = [
@@ -114,19 +112,55 @@ export default function App() {
   // Admon: solo administrador (rol admin en cualquier aplicación)
   const esAdmin = Object.values(roles || {}).includes("admin");
   const admon = esAdmin ? OPCIONES_ADMON : [];
+  const esSupervisor = ["operador", "admin"].includes(roles?.DESPACHOS);
+  const maestros = esSupervisor ? OPCIONES_MAESTROS : [];
   const inicial = (() => {
     const pedida = new URLSearchParams(window.location.search).get("vista");
-    return (vistas.find(v => v.id === pedida) || admon.find(v => v.id === pedida))?.id || vistas[0]?.id || admon[0]?.id;
+    return [...vistas, ...maestros, ...admon].find(v => v.id === pedida)?.id || vistas[0]?.id || maestros[0]?.id || admon[0]?.id;
   })();
   const [vista, setVista] = useState(inicial);
-  const [menuAdmon, setMenuAdmon] = useState(false);
-  const enAdmon = admon.some(o => o.id === vista);
+  const [menuAbierto, setMenuAbierto] = useState(null);   // "maestros" | "admon" | null
   useEffect(() => {
-    if (!menuAdmon) return;
-    const cerrar = () => setMenuAdmon(false);
+    if (!menuAbierto) return;
+    const cerrar = () => setMenuAbierto(null);
     window.addEventListener("click", cerrar);
     return () => window.removeEventListener("click", cerrar);
-  }, [menuAdmon]);
+  }, [menuAbierto]);
+
+  // Botón de menú desplegable (Maestros, Admon)
+  const menuDesplegable = (id, titulo, icono, opciones, encabezado) => {
+    if (!opciones.length) return null;
+    const dentro = opciones.some(o => o.id === vista);
+    const abierto = menuAbierto === id;
+    return (
+      <div key={id} style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+        <button onClick={() => setMenuAbierto(m => (m === id ? null : id))} aria-expanded={abierto}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "6px 10px" : "7px 14px", fontSize: isMobile ? 11 : 12,
+            fontWeight: dentro ? 700 : 500, border: dentro ? "1px solid #0F6E56" : "1px solid #E2EDE9", borderRadius: 9, whiteSpace: "nowrap",
+            background: dentro ? "#0F6E56" : "#fff", color: dentro ? "#fff" : "#6B8F80", cursor: "pointer" }}>
+          <span style={{ color: dentro ? "#fff" : "#9CB8AE", display: "flex" }}>{icono}</span>
+          {titulo}{dentro ? ` · ${opciones.find(o => o.id === vista)?.label}` : ""}
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }}><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        </button>
+        {abierto && (
+          <div style={{ position: isMobile ? "fixed" : "absolute", top: isMobile ? 110 : "calc(100% + 6px)", left: isMobile ? 12 : 0, right: isMobile ? 12 : "auto", zIndex: 50,
+            minWidth: 280, background: "#fff", border: "1px solid #E2EDE9", borderRadius: 12, boxShadow: "0 16px 40px rgba(10,30,24,0.16)", padding: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#9CB8AE", textTransform: "uppercase", letterSpacing: ".08em", padding: "6px 10px 4px" }}>{encabezado}</div>
+            {opciones.map(o => (
+              <button key={o.id} onClick={() => { setVista(o.id); setMenuAbierto(null); }}
+                style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: 8,
+                  background: vista === o.id ? "#EAF7F1" : "transparent", cursor: "pointer" }}
+                onMouseEnter={e => { if (vista !== o.id) e.currentTarget.style.background = "#F7FCF9"; }}
+                onMouseLeave={e => { if (vista !== o.id) e.currentTarget.style.background = "transparent"; }}>
+                <span style={{ fontSize: 16, lineHeight: "20px" }}>{o.icono}</span>
+                <span><span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1a2e27" }}>{o.label}</span>
+                  <span style={{ display: "block", fontSize: 11, color: "#6B8F80" }}>{o.descripcion}</span></span>
+              </button>))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const nombreUsuario = perfil?.nombre || perfil?.email || "Usuario";
 
@@ -155,7 +189,8 @@ export default function App() {
             {vistas.map(v => {
               const activo = vista === v.id;
               return (
-                <button key={v.id} onClick={() => setVista(v.id)}
+                <React.Fragment key={v.id}>
+                <button onClick={() => setVista(v.id)}
                   style={{
                     display: "flex", alignItems: "center", gap: 6,
                     padding: isMobile ? "6px 10px" : "7px 14px",
@@ -173,36 +208,13 @@ export default function App() {
                   <span style={{ color: activo ? "#fff" : "#9CB8AE" }}>{v.icon}</span>
                   {isMobile ? v.labelCorto : v.label}
                 </button>
+                {/* Maestros va después de Solicitudes */}
+                {v.id === "solicitudes" && menuDesplegable("maestros", "Maestros", ICONO_MAESTROS, maestros, "Maestros · supervisor y administrador")}
+                </React.Fragment>
               );
             })}
-            {admon.length > 0 && (
-              <div style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                <button onClick={() => setMenuAdmon(m => !m)} aria-expanded={menuAdmon}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "6px 10px" : "7px 14px", fontSize: isMobile ? 11 : 12,
-                    fontWeight: enAdmon ? 700 : 500, border: enAdmon ? "1px solid #0F6E56" : "1px solid #E2EDE9", borderRadius: 9, whiteSpace: "nowrap",
-                    background: enAdmon ? "#0F6E56" : "#fff", color: enAdmon ? "#fff" : "#6B8F80", cursor: "pointer" }}>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ color: enAdmon ? "#fff" : "#9CB8AE" }}><circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                  Admon{enAdmon ? ` · ${admon.find(o => o.id === vista)?.label}` : ""}
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ transform: menuAdmon ? "rotate(180deg)" : "none", transition: "transform .15s" }}><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </button>
-                {menuAdmon && (
-                  <div style={{ position: isMobile ? "fixed" : "absolute", top: isMobile ? 110 : "calc(100% + 6px)", left: isMobile ? 12 : 0, right: isMobile ? 12 : "auto", zIndex: 50,
-                    minWidth: 280, background: "#fff", border: "1px solid #E2EDE9", borderRadius: 12, boxShadow: "0 16px 40px rgba(10,30,24,0.16)", padding: 6 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#9CB8AE", textTransform: "uppercase", letterSpacing: ".08em", padding: "6px 10px 4px" }}>Administración · solo administrador</div>
-                    {admon.map(o => (
-                      <button key={o.id} onClick={() => { setVista(o.id); setMenuAdmon(false); }}
-                        style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: 8,
-                          background: vista === o.id ? "#EAF7F1" : "transparent", cursor: "pointer" }}
-                        onMouseEnter={e => { if (vista !== o.id) e.currentTarget.style.background = "#F7FCF9"; }}
-                        onMouseLeave={e => { if (vista !== o.id) e.currentTarget.style.background = "transparent"; }}>
-                        <span style={{ fontSize: 16, lineHeight: "20px" }}>{o.icono}</span>
-                        <span><span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1a2e27" }}>{o.label}</span>
-                          <span style={{ display: "block", fontSize: 11, color: "#6B8F80" }}>{o.descripcion}</span></span>
-                      </button>))}
-                  </div>
-                )}
-              </div>
-            )}
+            {!vistas.some(v => v.id === "solicitudes") && menuDesplegable("maestros", "Maestros", ICONO_MAESTROS, maestros, "Maestros · supervisor y administrador")}
+            {menuDesplegable("admon", "Admon", ICONO_ADMON, admon, "Administración · solo administrador")}
           </nav>
 
           {/* Usuario + regreso a la plataforma */}
@@ -239,7 +251,9 @@ export default function App() {
         {vista === "despachos"  && <PortalDespachos isMobile={isMobile} />}
         {vista === "solicitudes" && <Solicitudes isMobile={isMobile} />}
         {vista === "inventario" && <InventarioPasillos isMobile={isMobile} />}
-        {vista === "clientes"   && <Clientes />}
+        {/* Menú Maestros (supervisor y administrador) */}
+        {vista === "clientes"   && esSupervisor && <Clientes />}
+        {vista === "articulos"  && esSupervisor && <Articulos />}
         {vista === "historico"  && <Historico />}
         {/* Menú Admon (solo administrador) */}
         {vista === "utilidades" && esAdmin && <Utilidades isMobile={isMobile} />}
