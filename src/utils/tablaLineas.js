@@ -40,15 +40,20 @@ export const COLUMNAS_LINEAS = [
   { key: "bodega",                    titulo: "Bodega",              w: 64 },
   { key: "origen",                    titulo: "Origen",              w: 70 },
   { key: "lote_numero",               titulo: "Bloque",              w: 140 },
+  { key: "consentimiento",            titulo: "Consentimiento",      w: 150 },   // 29-oct: alerta de inventario aceptada
 ];
 
 export const valorCelda = (f, key) =>
   key === "fecha" ? fechaHoraBogota(f.radicada_at)
   : key === "proceso" ? etiquetaMotivo(f.proceso)
   : key === "adjuntos" ? (f.adjuntos?.length ? String(f.adjuntos.length) : "")
+  : key === "consentimiento" ? textoConsentimiento(f.consentimiento_at)
   : key === "estado" ? uiEstado(f.estado_codigo, f.estado_nombre).label
   : key === "origen" ? ({ PDF: "PDF", EXCEL: "Excel" }[f.origen] || "Manual")
   : f[key] ?? "";
+
+// Constancia de la alerta de inventario (SQL 032): "✓ 29/10/2026 14:05" o vacío
+export const textoConsentimiento = (at) => (at ? "✓ " + fechaHoraBogota(at) : "");
 
 // Filtro de columna: "texto" = contiene · * = cualquier texto en medio ("bell*group", "PTC*2025")
 export const coincide = (valor, filtro) => {

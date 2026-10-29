@@ -80,14 +80,17 @@ export function normalizarLinea(l, enc = {}) {
     bodega:       texto(l.bodega),
     observaciones: texto(l.observaciones),
     motivo:       etiquetaMotivo(l.proceso ?? enc.proceso),
+    consentimiento: l.consentimiento_at ? "Aceptado " + fechaHoraBogota(l.consentimiento_at) : "",
   };
 }
 
 // ── Hojas ────────────────────────────────────────────────────────────────
-export function hojaDespacho(lineas, { conSolicitud = false } = {}) {
-  const cols = conSolicitud
+export function hojaDespacho(lineas, { conSolicitud = false, conConsentimiento = false } = {}) {
+  let cols = conSolicitud
     ? [COLUMNAS_DESPACHO[0], { titulo: "N° SOLICITUD", campo: "numero", ancho: 18 }, ...COLUMNAS_DESPACHO.slice(1)]
     : COLUMNAS_DESPACHO;
+  // Histórico: constancia de la alerta de inventario (al final, después de MOTIVO)
+  if (conConsentimiento) cols = [...cols, { titulo: "CONSENTIMIENTO INVENTARIO", campo: "consentimiento", ancho: 26 }];
   const ws = XLSX.utils.aoa_to_sheet([cols.map(c => c.titulo), ...lineas.map(l => cols.map(c => l[c.campo]))]);
   ws["!cols"] = cols.map(c => ({ wch: c.ancho }));
   return ws;
@@ -192,10 +195,10 @@ export function hojaTablero(lineas) {
 }
 
 /** Libro con las 4 hojas a partir de líneas de la base (vw_lote_lineas / vw_solicitud_lineas). */
-export function libroBloque(lineasBase) {
+export function libroBloque(lineasBase, { conConsentimiento = false } = {}) {
   const lineas = lineasBase.map(l => normalizarLinea(l));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, hojaDespacho(lineas, { conSolicitud: true }), "DESPACHO");
+  XLSX.utils.book_append_sheet(wb, hojaDespacho(lineas, { conSolicitud: true, conConsentimiento }), "DESPACHO");
   XLSX.utils.book_append_sheet(wb, hojaWms(lineas), "CARGA A WMS");
   XLSX.utils.book_append_sheet(wb, hojaLibro1(lineas), "CARGA LIBRO 1");
   XLSX.utils.book_append_sheet(wb, hojaTablero(lineas), "TABLERO CONTROL");

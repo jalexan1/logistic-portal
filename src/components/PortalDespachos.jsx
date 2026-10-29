@@ -13,6 +13,8 @@ import { fechaHoraBogota } from "../utils/fechas";
 import { useAuth } from "./auth/authContext";
 import { AREAS, MOTIVOS, MOTIVOS_SIN_CLIENTE, etiquetaMotivo } from "../utils/tablaLineas";
 import SolicitudesDelDia from "./SolicitudesDelDia";
+import ConsentimientoPopup from "./ConsentimientoPopup";
+import { registrarConsentimiento, vincularConsentimiento } from "../services/consentimientoService";
 
 // ── Helpers de fecha ──
 const pad = n => String(n).padStart(2, "0");
@@ -291,6 +293,48 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const valorAlEntrar = useRef("");                  // valor de la celda al entrar (para saber si cambió)
   const llavePdfRef = useRef(null);   // misma llave en reintentos → no duplica
   const pdfInputRef = useRef(null);
+
+  // ── Alerta de inventario (consentimiento) antes de cargar Excel o PDF (SQL 032) ──
+  //  consent: popup abierto → { origen: "EXCEL"|"PDF", file?: File, soloRegistrar?: bool }
+  //  permitidoRef: el usuario aceptó y se abrió el selector de archivo
+  //  consentimientoRef: aceptación registrada para el archivo cargado → { id, version, aceptado_at }
+  const [consent, setConsent] = useState(null);
+  const [registrandoConsent, setRegistrandoConsent] = useState(false);
+  const permitidoRef = useRef({ EXCEL: false, PDF: false });
+  const consentimientoRef = useRef(null);
+  const pedirConsentimiento = (origen, file = null) => setConsent({ origen, file });
+  const registrarYCargar = async (origen, file, version) => {
+    setRegistrandoConsent(true);
+    try { consentimientoRef.current = await registrarConsentimiento({ version, origen, archivo: file ? file.name : (fileName || null) }); }
+    catch (e) {
+      consentimientoRef.current = null;
+      setError("⚠ No se pudo registrar la aceptación de la alerta de inventario: " + e.message + ". El pedido no se cargó.");
+      return false;
+    } finally { setRegistrandoConsent(false); }
+    if (file) { if (origen === "PDF") processPdf(file); else processExcel(file); }
+    return true;
+  };
+  const aceptarConsentimiento = async (texto) => {
+    const { origen, file, soloRegistrar } = consent;
+    if (soloRegistrar) {   // ya hay líneas cargadas sin constancia: solo se registra
+      if (await registrarYCargar(origen, null, texto.version) && showToast) showToast("✓ Aceptación registrada. Pulse «Radicar y descargar Excel» de nuevo.");
+      setConsent(null); return;
+    }
+    if (file) { await registrarYCargar(origen, file, texto.version); setConsent(null); return; }
+    // Sin archivo todavía: se abre el selector (debe ser en el mismo clic, por eso va antes de cualquier espera)
+    permitidoRef.current[origen] = texto.version || true;
+    setConsent(null);
+    (origen === "PDF" ? pdfInputRef : excelInputRef).current?.click();
+  };
+  const alElegirArchivo = (origen, e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    const version = permitidoRef.current[origen];
+    permitidoRef.current[origen] = false;
+    if (version) registrarYCargar(origen, f, typeof version === "number" ? version : null);
+    else pedirConsentimiento(origen, f);
+  };
   const isMobileLocal = typeof window !== "undefined" && window.innerWidth < 768;
 
   const parsePdfText = (fullText) => {
@@ -531,7 +575,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     finally { setLoading(false); }
   };
 
-  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file) processPdf(file); };
+  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file) pedirConsentimiento("PDF", file); };
 
   // ── Pedido con plantilla Excel ─────────────────────────────────────────
   // Misma lógica del PDF: grilla, lupas, EAN desde el maestro, celdas amarillas.
@@ -574,7 +618,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     } catch (err) { setError("No se pudo leer la plantilla: " + err.message); }
     finally { setCargandoExcel(false); if (excelInputRef.current) excelInputRef.current.value = ""; }
   };
-  const handleDropExcel = (e) => { e.preventDefault(); setDragExcel(false); const file = e.dataTransfer.files[0]; if (file) processExcel(file); };
+  const handleDropExcel = (e) => { e.preventDefault(); setDragExcel(false); const file = e.dataTransfer.files[0]; if (file) pedirConsentimiento("EXCEL", file); };
 
   // Entregas de la plantilla con datos distintos al maestro que aún no se aceptaron
   const inconsistenciasPendientes = () => !["EXCEL", "PDF"].includes(origenCarga) ? []
@@ -707,6 +751,11 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       return;
     }
     setRowErrors({});
+    // Constancia de la alerta de inventario: sin ella no se radica (Excel y PDF)
+    if (["EXCEL", "PDF"].includes(origenCarga) && !consentimientoRef.current) {
+      setConsent({ origen: origenCarga, soloRegistrar: true });
+      return;
+    }
     // ── 1) Radicar en la base de datos (transacción única). Si falla, NO se genera Excel.
     if (!llavePdfRef.current) llavePdfRef.current = nuevaLlave();
     setEnviandoPdf(true);
@@ -714,13 +763,21 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     try {
       radicada = await radicarSolicitud({
         llave: llavePdfRef.current, meta, filas: filasRadicar, origen: origenCarga,
-        pedidoHeader, archivo: fileName || null,
+        pedidoHeader: consentimientoRef.current
+          ? { ...(pedidoHeader || {}), consentimiento: { id: consentimientoRef.current.id, version: consentimientoRef.current.version, aceptado_at: consentimientoRef.current.aceptado_at } }
+          : pedidoHeader,
+        archivo: fileName || null,
       });
     } catch (ex) {
       if (showToast) showToast("⚠ " + ex.message);
       return;
     } finally {
       setEnviandoPdf(false);
+    }
+    // Enlaza la aceptación con la solicitud (si falla, la solicitud ya guarda la constancia en sus datos de origen)
+    if (consentimientoRef.current) {
+      try { await vincularConsentimiento(consentimientoRef.current.id, radicada.id); }
+      catch (e) { if (showToast) showToast("⚠ Solicitud radicada, pero no se pudo enlazar la aceptación de inventario: " + e.message); }
     }
     // ── 2) Excel con el número oficial devuelto por la base
     const solicitudFinal = radicada.numero;
@@ -742,7 +799,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
     setSolicitudYaGenerada(true); setPdfPopup(true);
   };
 
-  const resetPdf = () => { llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); setNoMaestro(null); setInconsist(null); setOrigenCarga("PDF"); setAdjuntos([]); setAdjSubidos(false); if (pdfInputRef.current) pdfInputRef.current.value = ""; if (excelInputRef.current) excelInputRef.current.value = ""; };
+  const resetPdf = () => { consentimientoRef.current = null; llavePdfRef.current = null; setPdfRows([]); setFileName(""); setError(""); setRowErrors({}); setPdfPopup(false); setSolicitudYaGenerada(false); setPedidoHeader(null); setModeloLeido(""); setNoMaestro(null); setInconsist(null); setOrigenCarga("PDF"); setAdjuntos([]); setAdjSubidos(false); if (pdfInputRef.current) pdfInputRef.current.value = ""; if (excelInputRef.current) excelInputRef.current.value = ""; };
 
   // Columnas de la grilla (mismo orden de la plantilla). lupa: abre el buscador del maestro.
   const PREVIEW_COLS = [
@@ -810,9 +867,9 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
               <a href={URL_PLANTILLA} download="Plantilla_Pedido.xlsx" onClick={e => e.stopPropagation()}
                 style={{ display:"inline-flex", alignItems:"center", gap:6, height:30, padding:"0 12px", fontSize:12, fontWeight:600, border:"1px solid #C5DDD4", borderRadius:8, background:"#fff", color:"#0F6E56", textDecoration:"none", whiteSpace:"nowrap" }}>⬇ Descargar plantilla</a>
             </div>
-            <div onDragOver={(e) => { e.preventDefault(); setDragExcel(true); }} onDragLeave={() => setDragExcel(false)} onDrop={handleDropExcel} onClick={() => excelInputRef.current?.click()}
+            <div onDragOver={(e) => { e.preventDefault(); setDragExcel(true); }} onDragLeave={() => setDragExcel(false)} onDrop={handleDropExcel} onClick={() => pedirConsentimiento("EXCEL")}
               style={{ flex:1, border:`1.5px dashed ${dragExcel ? "#0F6E56" : "#C5DDD4"}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background: dragExcel ? "#F0FBF6" : "#F7FCF9", cursor:"pointer", transition:"border-color 0.2s, background 0.2s" }}>
-              <input ref={excelInputRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display:"none" }} onChange={(e) => { if (e.target.files[0]) processExcel(e.target.files[0]); }} />
+              <input ref={excelInputRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display:"none" }} onClick={e => e.stopPropagation()} onChange={(e) => alElegirArchivo("EXCEL", e)} />
               <div style={{ width:36, height:36, background:"#E1F5EE", borderRadius:8, margin:"0 auto 10px", display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2.5" y="2.5" width="13" height="13" rx="1.5" stroke="#0F6E56" strokeWidth="1.3"/><path d="M2.5 7h13M2.5 11h13M7 2.5v13" stroke="#0F6E56" strokeWidth="1.2"/></svg>
               </div>
@@ -824,9 +881,9 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
           {/* Pedido desde PDF */}
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             <div style={{ display:"flex", alignItems:"center", height:30 }}><div style={{ fontSize:12, fontWeight:700, color:"#1a2e27" }}>📄 Pedido desde PDF</div></div>
-            <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop} onClick={() => pdfInputRef.current?.click()}
+            <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop} onClick={() => pedirConsentimiento("PDF")}
               style={{ border:`1.5px dashed ${dragOver ? "#0F6E56" : "#C5DDD4"}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background: dragOver ? "#F0FBF6" : "#F7FCF9", cursor:"pointer", height:"100%", boxSizing:"border-box", transition:"border-color 0.2s, background 0.2s" }}>
-              <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={(e) => { if (e.target.files[0]) processPdf(e.target.files[0]); }} />
+              <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:"none" }} onClick={e => e.stopPropagation()} onChange={(e) => alElegirArchivo("PDF", e)} />
               <div style={{ width:36, height:36, background:"#E1F5EE", borderRadius:8, margin:"0 auto 10px", display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 3h7l4 4v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M10 3v5h5" stroke="#0F6E56" strokeWidth="1.3" strokeLinejoin="round"/><path d="M6 10h6M6 13h4" stroke="#0F6E56" strokeWidth="1.2" strokeLinecap="round"/></svg>
               </div>
@@ -933,6 +990,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
           </>
         )}
       </div>
+      {consent && <ConsentimientoPopup origen={consent.origen} trabajando={registrandoConsent} onAceptar={aceptarConsentimiento} onCancelar={() => !registrandoConsent && setConsent(null)} />}
       {lupa && <BuscadorMaestro tipo={lupa.tipo} inicial={lupa.inicial} datosCrear={lupa.datosCrear} onElegir={elegirDeLupa} onCerrar={() => setLupa(null)} />}
       {noMaestro && !sinCliente && (
         <div style={{ position:"fixed", inset:0, zIndex:2500, background:"rgba(10,30,24,0.55)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>

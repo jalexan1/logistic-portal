@@ -14,7 +14,7 @@ import { listarSolicitudesRango, listarLineasSolicitudes, listarLotes, obtenerLi
 import { libroBloque, descargarExcelBloque } from "../services/excelDespachoService";
 import { listarAdjuntos } from "../services/adjuntosService";
 import { cargarParametros, diasRango, PARAMETROS_DEFECTO } from "../services/parametrosService";
-import { coincide, uiEstado, etiquetaMotivo, etiquetaArea } from "../utils/tablaLineas";
+import { coincide, uiEstado, etiquetaMotivo, etiquetaArea, textoConsentimiento } from "../utils/tablaLineas";
 import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
 import Paginador from "./Paginador";
 import AdjuntosBoton from "./AdjuntosBoton";
@@ -34,12 +34,14 @@ const COL_SOL = [
   { key: "total_lineas", titulo: "Líneas", w: 70, num: true },
   { key: "total_unidades", titulo: "Unidades", w: 90, num: true },
   { key: "lote_numero", titulo: "Bloque", w: 140 },
+  { key: "consentimiento", titulo: "Consentimiento", w: 150 },   // 29-oct
 ];
 const valorSol = (s, k) => k === "fecha" ? fechaHoraBogota(s.radicada_at)
   : k === "estado" ? uiEstado(s.estado_codigo, s.estado_nombre).label
   : k === "proceso" ? etiquetaMotivo(s.proceso)
   : k === "area_solicitante" ? etiquetaArea(s.area_solicitante)
   : k === "origen" ? (ORIGEN[s.origen] || s.origen || "")
+  : k === "consentimiento" ? textoConsentimiento(s.consentimiento_at)
   : s[k] ?? "";
 
 const campo = { height: 36, padding: "0 10px", fontSize: 13, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box" };
@@ -113,7 +115,7 @@ export default function Historico() {
       const lineas = (await listarLineasSolicitudes({ desde: consultado.desde, hasta: consultado.hasta, estado, tope: 50000 }))
         .filter(l => ids.has(l.solicitud_id));
       if (!lineas.length) { aviso("⚠ No hay líneas para exportar."); return; }
-      XLSX.writeFile(libroBloque(lineas), `historico_solicitudes_${consultado.desde}_a_${consultado.hasta}.xlsx`);
+      XLSX.writeFile(libroBloque(lineas, { conConsentimiento: true }), `historico_solicitudes_${consultado.desde}_a_${consultado.hasta}.xlsx`);
     } catch (e) { aviso("⚠ " + e.message); }
     finally { setExportando(false); }
   };

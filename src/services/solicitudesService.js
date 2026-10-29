@@ -67,7 +67,7 @@ export async function radicarSolicitud({ llave, meta, filas, origen, pedidoHeade
 
 export async function listarSolicitudes({ desde, hasta, estado, texto, limite = 200 } = {}) {
   let q = despachos().from("vw_solicitudes")
-    .select("id,numero,version,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,motivo_anulacion,lote_id,lote_numero,procesada_at,proceso")
+    .select("id,numero,version,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,motivo_anulacion,lote_id,lote_numero,procesada_at,proceso,consentimiento_at")
     .order("radicada_at", { ascending: false }).limit(limite);
   if (desde)  q = q.gte("fecha_radicacion", desde);
   if (hasta)  q = q.lte("fecha_radicacion", hasta);
@@ -97,7 +97,7 @@ export async function listarLineasSolicitudes({ desde, hasta, estado, tope = 500
   const todas = [];
   for (let ini = 0; ini < tope; ini += PAGINA) {
     let q = despachos().from("vw_solicitud_lineas")
-      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega,proceso")
+      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega,proceso,consentimiento_at")
       .order("radicada_at", { ascending: false }).order("solicitud_id", { ascending: false }).order("linea_nro")
       .range(ini, ini + PAGINA - 1);
     if (desde) q = q.gte("fecha_radicacion", desde);
@@ -192,7 +192,7 @@ export async function listarSolicitudesRango({ desde, hasta, estado, tope = 2000
   const PAGINA = 1000, todas = [];
   for (let ini = 0; ini < tope; ini += PAGINA) {
     let q = despachos().from("vw_solicitudes")
-      .select("id,numero,estado_codigo,estado_nombre,origen,area_solicitante,proceso,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,lote_id,lote_numero,procesada_at")
+      .select("id,numero,estado_codigo,estado_nombre,origen,area_solicitante,proceso,solicitante_nombre,solicitante_correo,numero_pedido_origen,total_lineas,total_unidades,radicada_at,fecha_radicacion,lote_id,lote_numero,procesada_at,consentimiento_at")
       .order("radicada_at", { ascending: false }).range(ini, ini + PAGINA - 1);
     if (desde) q = q.gte("fecha_radicacion", desde);
     if (hasta) q = q.lte("fecha_radicacion", hasta);
