@@ -37,3 +37,15 @@ export async function borrarArticulo(id) {
   if (error) throw new Error(mensajeError(error));
   refrescar();
 }
+
+/**
+ * Carga masiva de artículos (SQL 031). aplicar=false → simulación (no cambia nada).
+ * Devuelve [{ fila, item, ean, descripcion, accion, detalle }]
+ * accion: CREAR | ACTUALIZAR | SIN_CAMBIOS | DUPLICADO | NO_CARGADO
+ */
+export async function cargarArticulosMasivo(filas, aplicar = false) {
+  const { data, error } = await despachos().rpc("fn_cargar_articulos", { p_filas: filas, p_aplicar: aplicar });
+  if (error) throw new Error(mensajeError(error));
+  if (aplicar) refrescar();
+  return data || [];
+}

@@ -11,6 +11,8 @@ import { listarArticulos, guardarArticulo, cambiarActivoArticulo, borrarArticulo
 import { coincide } from "../utils/tablaLineas";
 import { fechaHoraBogota } from "../utils/fechas";
 import Paginador from "./Paginador";
+import CargaMasivaArticulos from "./CargaMasivaArticulos";
+import { descargarPlantillaArticulos } from "../services/plantillaArticulosExcel";
 
 const COLUMNAS = [
   { key: "item",        titulo: "Item (SKU)",  w: 150, fuerte: true },
@@ -62,6 +64,7 @@ export default function Articulos() {
   const [porPagina, setPorPagina] = useState(10);
   const [edicion, setEdicion] = useState(null);   // { original|null, d, faltan, error, guardando }
   const [eliminar, setEliminar] = useState(null); // { a, opcion, error, trabajando }
+  const [cargaMasiva, setCargaMasiva] = useState(false);   // 28-oct: plantilla ITEM | EAN | DESCRIPCION
   const aviso = (m) => { setToast(m); setTimeout(() => setToast(""), 4000); };
 
   const cargar = useCallback(async () => {
@@ -119,6 +122,8 @@ export default function Articulos() {
           <div style={{ fontSize: 12, color: "#6B8F80" }}>Item (SKU) y código EAN que se usan al cargar pedidos · {datos.filter(a => a.activo).length.toLocaleString("es-CO")} activos · {datos.filter(a => !a.activo).length.toLocaleString("es-CO")} inactivos</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={descargarPlantillaArticulos} title="Plantilla Excel: ITEM | EAN | DESCRIPCION" style={{ ...btn, height: 36 }}>⬇ Plantilla artículos</button>
+          <button onClick={() => setCargaMasiva(true)} title="Cargar o actualizar muchos artículos desde Excel" style={{ ...btn, height: 36 }}>⬆ Carga masiva</button>
           <button onClick={() => setEdicion({ original: null, d: {}, faltan: {}, error: "", guardando: false })} style={{ ...btnPri, height: 36 }}>➕ Nuevo artículo</button>
           <button onClick={cargar} disabled={cargando} style={{ ...btn, height: 36 }}>↻ Actualizar</button>
         </div>
@@ -165,6 +170,8 @@ export default function Articulos() {
         </div>
         <Paginador total={filtrados.length} pagina={paginaActual} porPagina={porPagina} onPagina={setPagina} onPorPagina={n => { setPorPagina(n); setPagina(1); }} unidad="artículos" />
       </div>
+
+      {cargaMasiva && <CargaMasivaArticulos onCerrar={() => setCargaMasiva(false)} onCargado={(m) => { aviso(m); cargar(); }} />}
 
       {edicion && (
         <Modal titulo={edicion.original ? `Editar artículo ${edicion.original.item}` : "Nuevo artículo"} onCerrar={() => !edicion.guardando && setEdicion(null)}>

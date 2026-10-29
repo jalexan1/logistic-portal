@@ -97,7 +97,7 @@ export async function listarLineasSolicitudes({ desde, hasta, estado, tope = 500
   const todas = [];
   for (let ini = 0; ini < tope; ini += PAGINA) {
     let q = despachos().from("vw_solicitud_lineas")
-      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega")
+      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega,proceso")
       .order("radicada_at", { ascending: false }).order("solicitud_id", { ascending: false }).order("linea_nro")
       .range(ini, ini + PAGINA - 1);
     if (desde) q = q.gte("fecha_radicacion", desde);
@@ -156,7 +156,7 @@ export async function obtenerLineasLote(loteId) {
   const todas = [];
   for (let desde = 0; ; desde += PAGINA) {
     const { data, error } = await despachos().from("vw_lote_lineas")
-      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega,solicitante_correo,ean,destinatario_direccion,destinatario_departamento,destinatario_telefono")
+      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega,solicitante_correo,ean,destinatario_direccion,destinatario_departamento,destinatario_telefono,proceso")
       .eq("lote_id", loteId)
       .order("solicitud_numero").order("linea_nro").order("linea_id")
       .range(desde, desde + PAGINA - 1);

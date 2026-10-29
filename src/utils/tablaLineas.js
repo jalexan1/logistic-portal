@@ -18,6 +18,8 @@ export const uiEstado = (codigo, nombre) =>
 // key = campo de despachos.vw_solicitud_lineas (o calculado en valorCelda)
 export const COLUMNAS_LINEAS = [
   { key: "fecha",                     titulo: "Fecha y hora",        w: 128 },
+  { key: "proceso",                   titulo: "Motivo",              w: 100 },   // 28-oct
+  { key: "adjuntos",                  titulo: "Adjunto",             w: 84, centro: true },  // 28-oct: 📎 n
   { key: "numero",                    titulo: "N° solicitud",        w: 132, fuerte: true },
   { key: "estado",                    titulo: "Estado",              w: 104 },
   { key: "area_solicitante",          titulo: "Área",                w: 110 },
@@ -42,8 +44,10 @@ export const COLUMNAS_LINEAS = [
 
 export const valorCelda = (f, key) =>
   key === "fecha" ? fechaHoraBogota(f.radicada_at)
+  : key === "proceso" ? etiquetaMotivo(f.proceso)
+  : key === "adjuntos" ? (f.adjuntos?.length ? String(f.adjuntos.length) : "")
   : key === "estado" ? uiEstado(f.estado_codigo, f.estado_nombre).label
-  : key === "origen" ? (f.origen === "PDF" ? "PDF" : "Manual")
+  : key === "origen" ? ({ PDF: "PDF", EXCEL: "Excel" }[f.origen] || "Manual")
   : f[key] ?? "";
 
 // Filtro de columna: "texto" = contiene · * = cualquier texto en medio ("bell*group", "PTC*2025")

@@ -509,10 +509,23 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       else {
         setPdfRows(filas);
         setPedidoHeader(header);
-        if (!bdMatch) {
-          setNoMaestro({ items: [{ idx: 0, nombre: nombreDestinatario || "", nit: "", datos: null }] });
-          setError(`⚠ "${nombreDestinatario || "Destinatario"}" no se encontró en el maestro de clientes. Búsquelo primero con la lupa 🔍 del Nombre; si no existe, desde la misma búsqueda puede crearlo.`);
-        } else setError("");
+        // 28-oct: el PDF sigue las MISMAS reglas que la plantilla Excel:
+        //  · cliente no encontrado → aviso + lupa + crear cliente PRELLENADO con los datos del PDF
+        //  · cliente con datos distintos al maestro → aviso de información inconsistente
+        const { noEncontrados, inconsistentes } = compararConMaestro(filas, BD_CLIENTES);
+        if (noEncontrados.length || !bdMatch) {
+          const items = noEncontrados.length ? noEncontrados
+            : [{ idx: 0, entrega: filas[0]?.entrega, nit: "", nombre: nombreDestinatario || "",
+                 datos: { nit: "", nombre: nombreDestinatario || "", direccion: filas[0]?.direccion, ciudad: filas[0]?.lugar, departamento: filas[0]?.departamento, telefono: filas[0]?.telefono } }];
+          const n = {};
+          items.forEach(g => filas.forEach((r, i) => { if (r.entrega === g.entrega && r.destinatario === g.nit) n[`${i}-destinatario`] = true; }));
+          setRowErrors(n);
+          setNoMaestro({ items });
+          setError(`⚠ "${items[0].nombre || nombreDestinatario || "Destinatario"}" no se encontró en el maestro de clientes. Búsquelo primero con la lupa 🔍; si no existe, desde la misma búsqueda puede crearlo (queda prellenado con los datos del PDF).`);
+        } else {
+          setError("");
+          if (inconsistentes.length) setInconsist({ grupos: inconsistentes });
+        }
       }
     } catch (err) { setError("Error al procesar el PDF: " + err.message); }
     finally { setLoading(false); }
@@ -564,7 +577,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
   const handleDropExcel = (e) => { e.preventDefault(); setDragExcel(false); const file = e.dataTransfer.files[0]; if (file) processExcel(file); };
 
   // Entregas de la plantilla con datos distintos al maestro que aún no se aceptaron
-  const inconsistenciasPendientes = () => origenCarga !== "EXCEL" ? []
+  const inconsistenciasPendientes = () => !["EXCEL", "PDF"].includes(origenCarga) ? []
     : compararConMaestro(pdfRows, BD_CLIENTES).inconsistentes.filter(g => !pdfRows[g.idx]?.inconsistenciaAceptada);
   const aceptarInconsistencias = () => {
     const grupos = inconsistenciasPendientes();
@@ -658,12 +671,23 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
       OBLIGATORIOS.forEach(k => { if (faltaEn(r, k)) rErrs[`${idx}-${k}`] = true; });
       if (sinCliente) return;   // LUEGO PAGO / FARMATODO: no se valida el cliente contra el maestro
       const m = BD_CLIENTES[String(r.destinatario || "").trim()];
-      // Plantilla Excel: el cliente debe existir en el maestro (o crearse con la lupa)
-      if (origenCarga === "EXCEL" && r.destinatario && !m) rErrs[`${idx}-destinatario`] = true;
+      // Plantilla Excel y PDF: el cliente debe existir en el maestro (o crearse con la lupa)
+      if (["EXCEL", "PDF"].includes(origenCarga) && r.destinatario && !m) rErrs[`${idx}-destinatario`] = true;
       // NIT y nombre deben estar alineados con el maestro (salvo inconsistencia aceptada)
       if (m && !r.inconsistenciaAceptada && String(m.nombre).trim().toUpperCase() !== String(r.nombre || "").trim().toUpperCase()) rErrs[`${idx}-nombre`] = true;
     });
-    // Plantilla Excel con datos distintos al maestro sin decidir → mostrar el aviso
+    // 28-oct: Excel y PDF → si hay clientes que no están en el maestro, NO se radica:
+    // aviso para buscarlos o crearlos (el formulario se abre con los datos de la línea).
+    if (!sinCliente && ["EXCEL", "PDF"].includes(origenCarga) && Object.keys(metaErrs).length === 0) {
+      const { noEncontrados } = compararConMaestro(filasRadicar, BD_CLIENTES);
+      if (noEncontrados.length) {
+        setRowErrors(rErrs);
+        setNoMaestro({ items: noEncontrados });
+        if (showToast) showToast(`⚠ Debe crear o seleccionar ${noEncontrados.length > 1 ? `los ${noEncontrados.length} clientes` : "el cliente"} en el maestro antes de radicar.`);
+        return;
+      }
+    }
+    // Plantilla Excel o PDF con datos distintos al maestro sin decidir → mostrar el aviso
     const pendientesInc = sinCliente ? [] : inconsistenciasPendientes();
     if (pendientesInc.length && Object.keys(metaErrs).length === 0) {
       setInconsist({ grupos: pendientesInc });
@@ -921,7 +945,7 @@ function PdfToExcel({ meta, showToast, onRadicada }) {
               <ol style={{ margin:"0 0 12px", paddingLeft:18 }}>
                 <li><b>Primero búsquelo</b> con la lupa: se muestran también los nombres <b>parecidos</b> (tildes, S.A.S, errores de digitación).</li>
                 <li>Si aparece, <b>selecciónelo</b>. Si hay varios parecidos, elija el correcto.</li>
-                <li>Solo si no existe, use <b>«Crear cliente nuevo»</b> en la misma búsqueda{origenCarga === "EXCEL" ? " (quedará prellenado con los datos de la plantilla)" : ""}. Quedará pendiente de revisión por el supervisor.</li>
+                <li>Solo si no existe, use <b>«Crear cliente nuevo»</b> en la misma búsqueda (quedará prellenado con los datos {origenCarga === "PDF" ? "del PDF" : "de la plantilla"} que se hayan digitado). <b>Sin el cliente en el maestro no se puede radicar.</b> Quedará pendiente de revisión por el supervisor.</li>
               </ol>
               {noMaestro.items.map(it => (
                 <div key={it.idx} style={{ display:"flex", alignItems:"center", gap:10, background:"#F7F9F8", border:"1px solid #E2EDE9", borderRadius:8, padding:"8px 12px", marginBottom:6 }}>

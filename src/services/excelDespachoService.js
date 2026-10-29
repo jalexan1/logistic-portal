@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import * as XLSX from "xlsx";
 import { fechaHoraBogota } from "../utils/fechas";
+import { etiquetaMotivo } from "../utils/tablaLineas";
 
 // Columnas de la plantilla de despacho (orden pedido en DESPACHOS.xlsx,
 // hoja "QUE SE DEBE SOLICITAR A CLICK", con la fecha y hora en la columna A).
@@ -31,17 +32,20 @@ export const COLUMNAS_DESPACHO = [
   { titulo: "UM",                  campo: "um",           ancho: 6 },
   { titulo: "ITEM",                campo: "item",         ancho: 8 },
   { titulo: "BODEGA",              campo: "bodega",       ancho: 8 },
+  { titulo: "MOTIVO",              campo: "motivo",       ancho: 14 },   // 28-oct: al final
 ];
 
 const COLUMNAS_WMS = [
   ["Entrega", "entrega", 16], ["Destinatario (NIT)", "nit", 16], ["Nombre destinatario", "nombre", 32],
   ["Ciudad", "ciudad", 16], ["Ean", "ean", 16], ["Cantidad entrega", "cantidad", 14],
   ["UM", "um", 6], ["item", "item", 8], ["bodega", "bodega", 8],
+  ["Motivo", "motivo", 14],   // 28-oct: al final (no mueve las columnas que lee el WMS)
 ];
 
 const COLUMNAS_LIBRO1 = [
   ["ENTREGA", 16], ["SKU", 8], ["CANTIDAD", 10], ["Destinatario (NIT)", 16], ["Nombre destinatario", 32],
   ["Direccion", 28], ["Telefono", 16], ["Ciudad", 16], ["Departamento", 16],
+  ["Motivo", 14],             // 28-oct: al final
 ];
 
 const texto = (v) => (v === null || v === undefined ? "" : String(v));
@@ -75,6 +79,7 @@ export function normalizarLinea(l, enc = {}) {
     item:         itemValor(l.item),
     bodega:       texto(l.bodega),
     observaciones: texto(l.observaciones),
+    motivo:       etiquetaMotivo(l.proceso ?? enc.proceso),
   };
 }
 
@@ -106,7 +111,7 @@ export function filasLibro1(lineas) {
     if (!g.departamento && l.departamento) g.departamento = l.departamento;
     grupos.set(k, g);
   });
-  return [...grupos.values()].map(g => [g.entrega, g.skus.size, g.total, g.nit, g.nombre, g.direccion, g.telefono, g.ciudad, g.departamento]);
+  return [...grupos.values()].map(g => [g.entrega, g.skus.size, g.total, g.nit, g.nombre, g.direccion, g.telefono, g.ciudad, g.departamento, g.motivo]);
 }
 
 export function hojaLibro1(lineas) {
@@ -178,7 +183,7 @@ const COLUMNAS_TABLERO = [
   ["FECHA Y HORA", "fechaHora", 17], ["FACTURA", "entrega", 16], ["NIT", "nit", 14],
   ["NOMBRE", "nombre", 32], ["SKU", "sku", 16], ["CANTIDAD", "cantidad", 10],
   ["DIRECCION", "direccion", 30], ["TELEFONO", "telefono", 15], ["CIUDAD", "ciudad", 16],
-  ["DEPARTAMENTO", "departamento", 16],
+  ["DEPARTAMENTO", "departamento", 16], ["MOTIVO", "motivo", 14],   // 28-oct: al final
 ];
 export function hojaTablero(lineas) {
   const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_TABLERO.map(c => c[0]), ...lineas.map(l => COLUMNAS_TABLERO.map(c => l[c[1]] ?? ""))]);

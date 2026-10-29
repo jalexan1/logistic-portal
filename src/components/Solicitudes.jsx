@@ -26,6 +26,8 @@ import {
 } from "../services/solicitudesService";
 import { COLUMNAS_LINEAS, filtrarLineas, valorCelda } from "../utils/tablaLineas";
 import Paginador from "./Paginador";
+import AdjuntosBoton from "./AdjuntosBoton";
+import { listarAdjuntos } from "../services/adjuntosService";
 import { fechaHoraBogota, isoFechaBogota } from "../utils/fechas";
 import { descargarExcelBloque } from "../services/excelDespachoService";
 import { cargarParametros, diasRango, PARAMETROS_DEFECTO } from "../services/parametrosService";
@@ -129,6 +131,10 @@ export default function Solicitudes({ isMobile }) {
     setCargando(true); setError("");
     try {
       const filas = await listarLineasSolicitudes({ desde: filtros.desde, hasta: filtros.hasta, estado: filtros.estado });
+      // 28-oct: columna Adjunto → adjuntos vigentes de cada solicitud (una consulta por cada 200 solicitudes)
+      let adj = {};
+      try { adj = await listarAdjuntos(filas.map(f => f.solicitud_id)); } catch { adj = {}; }
+      filas.forEach(f => { f.adjuntos = adj[f.solicitud_id] || []; });
       setDatos(filas); setPagina(1);
       // La selección solo conserva lo que sigue visible y Radicado
       const vigentes = new Set(filas.filter(f => f.estado_codigo === "RADICADA").map(f => f.solicitud_id));
@@ -357,7 +363,7 @@ export default function Solicitudes({ isMobile }) {
                           onChange={marcarTodas} titulo="Marcar o desmarcar todas las solicitudes Radicadas que cumplen los filtros" />
                       </th>
                     )}
-                    {COLUMNAS_LINEAS.map(c => <th key={c.key} style={{ ...th, textAlign: c.num ? "right" : "left" }}>{c.titulo}</th>)}
+                    {COLUMNAS_LINEAS.map(c => <th key={c.key} style={{ ...th, textAlign: c.num ? "right" : c.centro ? "center" : "left" }}>{c.titulo}</th>)}
                     <th style={{ ...th, textAlign: "center" }}>Acciones</th>
                   </tr>
                   {/* Filtros por columna */}
@@ -400,6 +406,11 @@ export default function Solicitudes({ isMobile }) {
                         )}
                         {COLUMNAS_LINEAS.map(c => {
                           const v = valorCelda(f, c.key);
+                          if (c.key === "adjuntos") return (
+                            <td key={c.key} style={{ ...tdC, borderTop: bordeSup, textAlign: "center", overflow: "visible" }}>
+                              <AdjuntosBoton adjuntos={f.adjuntos || []} numero={f.numero} onError={aviso} />
+                            </td>
+                          );
                           if (c.key === "estado") return (
                             <td key={c.key} style={{ ...tdC, borderTop: bordeSup }}><span title={f.lote_numero ? `Bloque ${f.lote_numero}` : ""} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "2px 9px", borderRadius: 20 }}>{est.label}</span></td>
                           );
