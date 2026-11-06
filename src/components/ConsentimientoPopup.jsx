@@ -1,5 +1,5 @@
 // ── ConsentimientoPopup.jsx ──────────────────────────────────────────────
-// Alerta de inventario antes de cargar un pedido (Excel o PDF).
+// Alerta de inventario antes de cargar un pedido (Excel, PDF o registro manual).
 // «Continuar» solo se habilita al marcar «Leí y acepto». La aceptación se
 // registra en la base (SQL 032) desde PortalDespachos.
 // ─────────────────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ export default function ConsentimientoPopup({ origen, trabajando = false, onAcep
           <div style={{ width: 38, height: 38, borderRadius: 10, background: "#F59E0B", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>⚠️</div>
           <div>
             <div id="consent-titulo" style={{ fontSize: 15.5, fontWeight: 700, color: "#92400E" }}>{texto.titulo}</div>
-            <div style={{ fontSize: 11.5, color: "#B45309" }}>Antes de cargar el pedido {origen === "PDF" ? "desde PDF" : "con la plantilla Excel"}</div>
+            <div style={{ fontSize: 11.5, color: "#B45309" }}>{origen === "MANUAL" ? "Antes de registrar el pedido manualmente" : `Antes de cargar el pedido ${origen === "PDF" ? "desde PDF" : "con la plantilla Excel"}`}</div>
           </div>
         </div>
 

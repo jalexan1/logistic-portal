@@ -60,7 +60,7 @@ export async function buscarItems({ item, ean, descripcion } = {}, limite = 100)
 
 export async function buscarDestinatarios({ nit, nombre, ciudad } = {}, limite = 100) {
   let q = core().from("destinatarios")
-    .select("nit,nombre,direccion,ciudad,departamento,telefono").eq("activo", true).order("nombre").limit(limite);
+    .select("nit,nombre,direccion,ciudad,departamento,telefono,estado_revision").eq("activo", true).order("nombre").limit(limite);
   const pn = patronComodin(nit), pm = patronComodin(nombre), pc = patronComodin(ciudad);
   if (pn) q = q.ilike("nit", pn);
   if (pm) q = q.ilike("nombre", pm);

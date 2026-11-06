@@ -1,10 +1,13 @@
 // ── Clientes.jsx ─────────────────────────────────────────────────────────
 // Maestro de clientes (destinatarios). Solo supervisor (rol operador) y admin.
 //
-//  1. «Clientes por revisar»: los creados desde la pantalla Despachos (popup).
+//  1. «Clientes por revisar»: los creados (o corregidos) desde Despachos.
 //     El supervisor los revisa, puede corregir datos y deja una NOTA:
-//       · Aprobar  → sale de esta tabla y pasa a la tabla de clientes.
-//       · Rechazar → queda inactivo (ej. duplicado) y sale de las búsquedas.
+//       · Aprobar   → sale de esta tabla y pasa a la tabla de clientes.
+//       · Rechazar  → 06-nov: queda ACTIVO con estado «Rechazado» y con los campos
+//                     que se deben corregir. Quien radique con ese NIT ve la nota y
+//                     corrige; el cliente vuelve aquí como pendiente (SQL 034).
+//       · Inactivar → 06-nov: botón aparte; el cliente queda inactivo.
 //  2. «Clientes»: todo el maestro con filtros por columna, paginación y CRUD:
 //     crear, editar, inactivar / reactivar y eliminar. Al eliminar se pregunta:
 //       · Inactivar  (se puede recuperar), o
@@ -18,16 +21,25 @@ import {
 } from "../services/clientesMaestroService";
 import { cargarCiudades, departamentoDeCiudad } from "../services/maestrosService";
 import { cargarDestinatarios } from "../services/clientesService";
-import { coincide } from "../utils/tablaLineas";
 import CargaMasivaClientes from "./CargaMasivaClientes";
 import { descargarPlantillaClientes } from "../services/plantillaClientesExcel";
 import { fechaHoraBogota } from "../utils/fechas";
 import Paginador from "./Paginador";
+import { coincide, nombreCampos } from "../utils/tablaLineas";
+
+// Campos que el supervisor puede marcar al rechazar (códigos de core.destinatarios.campos_corregir)
+const CAMPOS_RECHAZO = [
+  { titulo: "Nombre", codigos: ["NOMBRE"] },
+  { titulo: "Dirección", codigos: ["DIRECCION"] },
+  { titulo: "Teléfono", codigos: ["TELEFONO"] },
+  { titulo: "Ciudad / Departamento", codigos: ["CIUDAD", "DEPARTAMENTO"] },
+];
 
 const ORIGEN = { MAESTRO: "Carga inicial", DESPACHOS: "Despachos", CLIENTES: "Pantalla Clientes", CARGA_MASIVA: "Carga masiva" };
+// 06-nov: inactivo manda (también si se inactivó desde la revisión); rechazado = activo por corregir
 const estadoCliente = (c) =>
-  c.estado_revision === "RECHAZADO" ? { label: "Rechazado", color: "#C0392B", bg: "#FFF0EE" }
-  : !c.activo ? { label: "Inactivo", color: "#6B7280", bg: "#F3F4F6" }
+  !c.activo ? { label: "Inactivo", color: "#6B7280", bg: "#F3F4F6" }
+  : c.estado_revision === "RECHAZADO" ? { label: "Rechazado", color: "#C0392B", bg: "#FFF0EE" }
   : { label: "Activo", color: "#0F6E56", bg: "#E1F5EE" };
 
 const COLUMNAS = [
@@ -45,7 +57,7 @@ const COLUMNAS = [
 const valor = (c, key) =>
   key === "estado" ? estadoCliente(c).label
   : key === "origen" ? (ORIGEN[c.origen] || c.origen || "")
-  : key === "revision" ? (c.revisado_at ? `${c.revisado_por_nombre || ""} · ${c.nota_revision || ""}` : "")
+  : key === "revision" ? (c.revisado_at ? [c.revisado_por_nombre, c.nota_revision, c.campos_corregir?.length && c.activo && c.estado_revision === "RECHAZADO" ? `Corregir: ${nombreCampos(c.campos_corregir)}` : ""].filter(Boolean).join(" · ") : "")
   : c[key] ?? "";
 
 const campo = { height: 36, padding: "0 10px", fontSize: 13, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box", width: "100%" };
@@ -152,20 +164,28 @@ export default function Clientes() {
   );
 
   // ── Revisar (aprobar / rechazar) ──
-  const abrirRevision = (c) => setRevision({ original: c, d: { ...c }, nota: "", faltan: {}, error: "", guardando: false });
-  const confirmarRevision = async (aprobar) => {
+  const abrirRevision = (c) => setRevision({ original: c, d: { ...c }, nota: "", campos: [], faltan: {}, error: "", guardando: false });
+  // accion: APROBAR | RECHAZAR | INACTIVAR (SQL 034)
+  const confirmarRevision = async (accion) => {
     const r = revision;
-    if (!r.nota.trim()) { setRevision({ ...r, error: "Escriba la nota de la revisión (qué se verificó o por qué se rechaza)." }); return; }
+    if (!r.nota.trim()) { setRevision({ ...r, error: "Escriba la nota de la revisión (qué se verificó, qué debe corregirse o por qué se inactiva)." }); return; }
+    if (accion === "RECHAZAR" && !r.campos.length) { setRevision({ ...r, error: "Marque los campos que el solicitante debe corregir (dirección, teléfono…)." }); return; }
     const f = faltantes(r.d);
-    if (aprobar && Object.values(f).some(Boolean)) { setRevision({ ...r, faltan: f, error: "Complete los campos marcados en amarillo antes de aprobar." }); return; }
+    if (accion === "APROBAR" && Object.values(f).some(Boolean)) { setRevision({ ...r, faltan: f, error: "Complete los campos marcados en amarillo antes de aprobar." }); return; }
     setRevision({ ...r, guardando: true, error: "" });
     try {
-      if (aprobar && cambioDatos(r.d, r.original)) await guardarCliente({ ...r.d, id: r.original.id, version: r.original.version });
-      await revisarCliente({ id: r.original.id, aprobar, nota: r.nota });
+      if (accion === "APROBAR" && cambioDatos(r.d, r.original)) await guardarCliente({ ...r.d, id: r.original.id, version: r.original.version });
+      await revisarCliente({ id: r.original.id, accion, nota: r.nota, campos: accion === "RECHAZAR" ? r.campos : null });
       setRevision(null);
-      await refrescar(aprobar ? `✓ ${r.d.nombre} aprobado: pasó a la tabla de clientes` : `${r.d.nombre} rechazado: quedó inactivo`);
+      await refrescar(accion === "APROBAR" ? `✓ ${r.d.nombre} aprobado: pasó a la tabla de clientes`
+        : accion === "RECHAZAR" ? `${r.d.nombre} rechazado: sigue activo y se le pedirá corregir ${nombreCampos(r.campos)} a quien radique`
+        : `${r.d.nombre} inactivado (se puede reactivar)`);
     } catch (e) { setRevision({ ...r, guardando: false, error: e.message }); }
   };
+  const marcarCampo = (codigos) => setRevision(r => {
+    const tiene = codigos.every(k => r.campos.includes(k));
+    return { ...r, error: "", campos: tiene ? r.campos.filter(k => !codigos.includes(k)) : [...new Set([...r.campos, ...codigos])] };
+  });
 
   // ── Crear / editar ──
   const guardarEdicion = async () => {
@@ -202,7 +222,7 @@ export default function Clientes() {
         <div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#1a2e27" }}>Maestro de clientes</div>
           <div style={{ fontSize: 12, color: "#6B8F80" }}>
-            {pendientes.length} por revisar · {maestro.filter(c => c.activo).length.toLocaleString("es-CO")} activos · {maestro.filter(c => !c.activo).length.toLocaleString("es-CO")} inactivos
+            {pendientes.length} por revisar · {maestro.filter(c => c.activo && c.estado_revision !== "RECHAZADO").length.toLocaleString("es-CO")} activos · {maestro.filter(c => c.activo && c.estado_revision === "RECHAZADO").length.toLocaleString("es-CO")} rechazados por corregir · {maestro.filter(c => !c.activo).length.toLocaleString("es-CO")} inactivos
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -221,7 +241,7 @@ export default function Clientes() {
           <span style={{ minWidth: 26, height: 26, borderRadius: 13, background: pendientes.length ? "#F59E0B" : "#C9D6D0", color: "#fff", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 8px" }}>{pendientes.length}</span>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#1a2e27" }}>Clientes por revisar (creados en Despachos)</div>
-            <div style={{ fontSize: 11, color: "#6B8F80" }}>Revise los datos, deje una nota y apruebe: el cliente pasa a la tabla de clientes. Si está duplicado o mal creado, recházelo.</div>
+            <div style={{ fontSize: 11, color: "#6B8F80" }}>Revise los datos, deje una nota y apruebe: el cliente pasa a la tabla de clientes. Si le faltan datos, recházelo marcando qué debe corregirse; si está duplicado o no debe usarse, inactívelo.</div>
           </div>
         </div>
         {cargando && <div style={{ padding: 16, fontSize: 13, color: "#6B8F80" }}>Cargando…</div>}
@@ -235,7 +255,9 @@ export default function Clientes() {
               <tbody>{pendientes.map(c => (
                 <tr key={c.id}>
                   <td style={td}>{c.nit}</td>
-                  <td style={{ ...td, fontWeight: 700, color: "#0F6E56", maxWidth: 260 }} title={c.nombre}>{c.nombre}</td>
+                  <td style={{ ...td, fontWeight: 700, color: "#0F6E56", maxWidth: 260 }} title={c.nombre}>{c.nombre}
+                    {c.corregido_at && <span title={`Rechazado antes: «${c.nota_revision || ""}». Corregido por ${c.corregido_por_nombre || "—"} el ${fechaHoraBogota(c.corregido_at)}`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: "#1D4ED8", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 20, padding: "1px 7px" }}>Corregido</span>}
+                  </td>
                   <td style={{ ...td, maxWidth: 220 }} title={c.direccion || ""}>{c.direccion || "—"}</td>
                   <td style={td}>{c.ciudad || "—"}</td>
                   <td style={td}>{c.departamento || "—"}</td>
@@ -291,6 +313,7 @@ export default function Clientes() {
                     <td style={{ ...td, textAlign: "center", overflow: "visible" }}>
                       <span style={{ display: "inline-flex", gap: 5 }}>
                         <button onClick={() => setEdicion({ original: c, d: { ...c }, faltan: {}, error: "", guardando: false })} style={{ ...btn, height: 28, fontSize: 11 }}>Editar</button>
+                        {c.activo && c.estado_revision === "RECHAZADO" && <button onClick={() => abrirRevision(c)} title="Aprobar (corrigiendo los datos usted mismo) o inactivar" style={{ ...btnPri, height: 28, fontSize: 11 }}>Revisar</button>}
                         {c.activo
                           ? <button onClick={() => setEliminar({ c, opcion: "inactivar", error: "", trabajando: false })} style={{ ...btnRojo, height: 28, fontSize: 11 }}>Eliminar</button>
                           : <>
@@ -314,18 +337,44 @@ export default function Clientes() {
           <div style={{ fontSize: 12, color: "#6B8F80", marginBottom: 12 }}>
             Creado por <b>{revision.original.creado_por_nombre || "—"}</b> el {fechaHoraBogota(revision.original.created_at)}. Puede corregir los datos antes de aprobar.
           </div>
+          {revision.original.nota_revision && (
+            <div style={{ fontSize: 12, color: "#92400E", background: "#FFFBEB", border: "1px solid #FCD9A0", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+              {revision.original.estado_revision === "RECHAZADO" ? "Rechazado" : "Revisión anterior"} por <b>{revision.original.revisado_por_nombre || "—"}</b>: «{revision.original.nota_revision}»
+              {revision.original.corregido_at && <> · Corregido por <b>{revision.original.corregido_por_nombre || "—"}</b> el {fechaHoraBogota(revision.original.corregido_at)}</>}
+            </div>
+          )}
           <CamposCliente d={revision.d} setD={(fn) => setRevision(r => ({ ...r, d: typeof fn === "function" ? fn(r.d) : fn }))} faltan={revision.faltan} />
           <label style={{ ...lbl, marginTop: 12 }}>Nota de la revisión *
             <textarea value={revision.nota} onChange={e => setRevision(r => ({ ...r, nota: e.target.value }))} rows={3}
-              placeholder="Ej.: Verificado con el RUT y la orden de compra. / Duplicado de BELLPROF GROUP S.A.S."
+              placeholder="Ej.: Verificado con el RUT y la orden de compra. / Sin dirección ni teléfono. / Duplicado de BELLPROF GROUP S.A.S."
               style={{ ...campo, height: "auto", padding: 10, fontFamily: "inherit", resize: "vertical" }} />
           </label>
+          {revision.original.estado_revision === "PENDIENTE" && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: "#6B8F80", fontWeight: 500, marginBottom: 6 }}>Si rechaza, marque lo que el solicitante debe corregir *</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {CAMPOS_RECHAZO.map(x => {
+                  const on = x.codigos.every(k => revision.campos.includes(k));
+                  return (
+                    <label key={x.titulo} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, cursor: "pointer", userSelect: "none", padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${on ? "#C0392B" : "#E2EDE9"}`, background: on ? "#FFF0EE" : "#fff", color: on ? "#C0392B" : "#44574F" }}>
+                      <input type="checkbox" checked={on} onChange={() => marcarCampo(x.codigos)} disabled={revision.guardando} style={{ accentColor: "#C0392B" }} />
+                      {x.titulo}
+                    </label>);
+                })}
+              </div>
+            </div>
+          )}
           {revision.error && <div style={{ marginTop: 10, fontSize: 12.5, color: "#C0392B" }}>⚠ {revision.error}</div>}
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-            <button onClick={() => confirmarRevision(false)} disabled={revision.guardando} style={btnRojo}>Rechazar (queda inactivo)</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {revision.original.estado_revision === "PENDIENTE" && (
+                <button onClick={() => confirmarRevision("RECHAZAR")} disabled={revision.guardando} title="Sigue activo: a quien radique con este NIT se le pide corregir los campos marcados" style={btnRojo}>Rechazar (debe corregir)</button>
+              )}
+              <button onClick={() => confirmarRevision("INACTIVAR")} disabled={revision.guardando} title="Deja de salir en Despachos. Se puede reactivar." style={{ ...btn, color: "#6B7280", borderColor: "#D1D5DB" }}>Inactivar</button>
+            </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setRevision(null)} disabled={revision.guardando} style={btn}>Cancelar</button>
-              <button onClick={() => confirmarRevision(true)} disabled={revision.guardando} style={btnPri}>{revision.guardando ? "Guardando…" : "✓ Aprobar"}</button>
+              <button onClick={() => confirmarRevision("APROBAR")} disabled={revision.guardando} style={btnPri}>{revision.guardando ? "Guardando…" : "✓ Aprobar"}</button>
             </div>
           </div>
         </Modal>

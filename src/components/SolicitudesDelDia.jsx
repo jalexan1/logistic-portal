@@ -73,7 +73,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
   const valorFiltro = (sol, k) => k === "hora" ? (esHoy ? horaBogota(sol.radicada_at) : fechaHoraBogota(sol.radicada_at))
     : k === "origen" ? ORIGEN_TXT(sol) : sol[k] ?? "";
   const filtradas = datos.filter(sol =>
-    ["numero", "hora", "solicitante_nombre", "origen"].every(k => coincide(valorFiltro(sol, k), filtros[k]))
+    ["numero", "hora", "solicitante_nombre", "origen", "observacion_general"].every(k => coincide(valorFiltro(sol, k), filtros[k]))
     && (!filtros.area || sol.area_solicitante === filtros.area)
     && (!filtros.proceso || sol.proceso === filtros.proceso)
     && (!filtros.estado || sol.estado_codigo === filtros.estado));
@@ -148,6 +148,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                 <th style={th}>Motivo</th>
                 <th style={th}>Solicitante</th>
                 <th style={th}>Origen</th>
+                <th style={th}>Observación</th>
                 <th style={{ ...th, textAlign: "right" }}>Líneas</th>
                 <th style={{ ...th, textAlign: "right" }}>Unidades</th>
                 <th style={th}>Estado</th>
@@ -156,7 +157,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
               </tr>
               {/* Filtros de consulta */}
               <tr>
-                {[["numero"], ["hora"], ["area", AREAS], ["proceso", MOTIVOS], ["solicitante_nombre"], ["origen"], [null], [null],
+                {[["numero"], ["hora"], ["area", AREAS], ["proceso", MOTIVOS], ["solicitante_nombre"], ["origen"], ["observacion_general"], [null], [null],
                   ["estado", [{ valor: "RADICADA", etiqueta: "Radicada" }, { valor: "PROCESADA", etiqueta: "Procesada" }]], [null], [null]].map(([k, lista], i) => (
                   <th key={i} style={{ ...th, padding: "0 6px 6px" }}>
                     {k && (lista ? (
@@ -172,7 +173,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
             </thead>
             <tbody>
               {visibles.length === 0 && (
-                <tr><td colSpan={11} style={{ ...td, textAlign: "center", color: "#9CB8AE", padding: 16 }}>Ninguna solicitud cumple los filtros.</td></tr>
+                <tr><td colSpan={12} style={{ ...td, textAlign: "center", color: "#9CB8AE", padding: 16 }}>Ninguna solicitud cumple los filtros.</td></tr>
               )}
               {visibles.map(sol => {
                 const est = ESTADO_UI[sol.estado_codigo] || { label: sol.estado_nombre || sol.estado_codigo, color: "#6B8F80", bg: "#F2F8F5" };
@@ -184,6 +185,7 @@ export default function SolicitudesDelDia({ isMobile, recarga = 0, showToast }) 
                     <td style={td}>{etiquetaMotivo(sol.proceso) || "—"}</td>
                     <td style={{ ...td, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }} title={sol.solicitante_correo || ""}>{sol.solicitante_nombre}</td>
                     <td style={{ ...td, color: "#6B8F80" }}>{ORIGEN_TXT(sol)}</td>
+                    <td style={{ ...td, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", color: sol.observacion_general ? "#1a2e27" : "#C9D6D0" }} title={sol.observacion_general || ""}>{sol.observacion_general || "—"}</td>
                     <td style={{ ...td, textAlign: "right" }}>{num(sol.total_lineas)}</td>
                     <td style={{ ...td, textAlign: "right" }}>{num(sol.total_unidades)}</td>
                     <td style={td}>

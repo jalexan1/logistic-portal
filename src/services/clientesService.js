@@ -18,10 +18,12 @@ export async function cargarDestinatarios({ forzar = false } = {}) {
   const nuevos = {};
   for (let desde = 0; ; desde += PAGINA) {
     const { data, error } = await core().from("destinatarios")
-      .select("nit,nombre,ciudad,direccion,departamento,telefono,estado_revision").eq("activo", true)
+      .select("nit,nombre,ciudad,direccion,departamento,telefono,estado_revision,nota_revision,campos_corregir,revisado_por_nombre,revisado_at").eq("activo", true)
       .order("nit").range(desde, desde + PAGINA - 1);
     if (error) throw new Error("No se pudo cargar el maestro de destinatarios: " + error.message);
-    data.forEach(d => { nuevos[String(d.nit).trim()] = { nombre: d.nombre, ciudad: d.ciudad || "", direccion: d.direccion || "", departamento: d.departamento || "", telefono: d.telefono || "", estado_revision: d.estado_revision || "APROBADO" }; });
+    data.forEach(d => { nuevos[String(d.nit).trim()] = { nombre: d.nombre, ciudad: d.ciudad || "", direccion: d.direccion || "", departamento: d.departamento || "", telefono: d.telefono || "", estado_revision: d.estado_revision || "APROBADO",
+      // 06-nov: rechazado (activo) → el solicitante debe corregir los campos marcados
+      nota_revision: d.nota_revision || "", campos_corregir: d.campos_corregir || [], revisado_por_nombre: d.revisado_por_nombre || "", revisado_at: d.revisado_at || null }; });
     if (data.length < PAGINA) break;
   }
   Object.keys(BD_CLIENTES).forEach(k => delete BD_CLIENTES[k]);
@@ -38,6 +40,9 @@ export const registrarCliente = (nit, c) => {
     departamento: c.departamento || "", telefono: c.telefono || "", estado_revision: c.estado_revision || "PENDIENTE",
   };
 };
+
+// 06-nov: cliente RECHAZADO por el supervisor (sigue activo, pero hay que corregirlo antes de radicar)
+export const esRechazado = (nit) => BD_CLIENTES[String(nit ?? "").trim()]?.estado_revision === "RECHAZADO";
 
 export const buscarPorNit = (nit) => BD_CLIENTES[String(nit).trim()] || null;
 

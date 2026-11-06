@@ -32,7 +32,7 @@ export async function crearClienteDespachos({ nit, nombre, direccion, ciudad, de
   return c;
 }
 
-const COLUMNAS = "id,nit,nombre,direccion,telefono,ciudad,departamento,telefono_2,activo,estado_revision,origen,creado_por_nombre,created_at,revisado_at,revisado_por_nombre,nota_revision,version";
+const COLUMNAS = "id,nit,nombre,direccion,telefono,ciudad,departamento,telefono_2,activo,estado_revision,origen,creado_por_nombre,created_at,revisado_at,revisado_por_nombre,nota_revision,version,campos_corregir,corregido_at,corregido_por_nombre";
 
 /** Todos los clientes (paginado de a 1000, límite del API). */
 export async function listarClientes() {
@@ -58,10 +58,28 @@ export async function guardarCliente({ id = null, nit, nombre, direccion, ciudad
   return data;
 }
 
-export async function revisarCliente({ id, aprobar, nota }) {
-  const { data, error } = await despachos().rpc("fn_revisar_cliente", { p_id: id, p_aprobar: aprobar, p_nota: nota });
+/**
+ * Revisión del supervisor (SQL 034). accion: APROBAR | RECHAZAR | INACTIVAR.
+ *  · RECHAZAR: el cliente sigue ACTIVO; `campos` = lo que el solicitante debe corregir
+ *    (NOMBRE, DIRECCION, TELEFONO, CIUDAD, DEPARTAMENTO).
+ *  · INACTIVAR: deja de salir en Despachos (se puede reactivar).
+ */
+export async function revisarCliente({ id, accion, nota, campos = null }) {
+  const { data, error } = await despachos().rpc("fn_revisar_cliente", { p_id: id, p_accion: accion, p_nota: nota, p_campos: campos });
   if (error) throw new Error(mensajeError(error));
   return data;
+}
+
+/** Despachos: corrige un cliente RECHAZADO → vuelve a PENDIENTE y queda disponible en pantalla. */
+export async function corregirClienteRechazado({ nit, nombre, direccion, telefono, ciudad, departamento }) {
+  const { data, error } = await despachos().rpc("fn_corregir_cliente_rechazado", {
+    p_nit: nit, p_nombre: nombre || null, p_direccion: direccion || null, p_telefono: telefono || null,
+    p_ciudad: ciudad || null, p_departamento: departamento || null,
+  });
+  if (error) throw new Error(mensajeError(error));
+  const c = fila(data);
+  registrarCliente(c.nit, c);       // ya no está rechazado: se puede radicar
+  return c;
 }
 
 export async function cambiarActivoCliente({ id, activo }) {

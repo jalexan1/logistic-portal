@@ -225,6 +225,7 @@ export default function BuscadorMaestro({ tipo, inicial = {}, onElegir, onCerrar
                           <td key={k} style={{ padding: "8px 10px", color: f[k] ? "#1a2e27" : "#C9D6D0" }}>
                             {f[k] || "—"}
                             {k === "nombre" && f.estado_revision === "PENDIENTE" && <span title="Creado en Despachos, pendiente de revisión del supervisor" style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: "#B45309", background: "#FFF7E6", border: "1px solid #FCD9A0", borderRadius: 20, padding: "1px 7px" }}>Pendiente</span>}
+                            {k === "nombre" && f.estado_revision === "RECHAZADO" && <span title="Rechazado por el supervisor: al elegirlo se le pedirá corregir los datos marcados" style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: "#C0392B", background: "#FFF0EE", border: "1px solid #F5C6C0", borderRadius: 20, padding: "1px 7px" }}>Rechazado · corregir</span>}
                           </td>);
                       })}
                     </tr>))}</tbody>

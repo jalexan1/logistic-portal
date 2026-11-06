@@ -41,6 +41,8 @@ export const COLUMNAS_LINEAS = [
   { key: "origen",                    titulo: "Origen",              w: 70 },
   { key: "lote_numero",               titulo: "Bloque",              w: 140 },
   { key: "consentimiento",            titulo: "Consentimiento",      w: 150 },   // 29-oct: alerta de inventario aceptada
+  { key: "observaciones",             titulo: "Observación línea",   w: 200 },   // 06-nov
+  { key: "observacion_general",       titulo: "Observación general", w: 240 },   // 06-nov: popup antes de radicar
 ];
 
 export const valorCelda = (f, key) =>
@@ -91,3 +93,14 @@ export const MOTIVOS = [
 export const MOTIVOS_SIN_CLIENTE = ["LUEGO PAGO", "FARMATODO"];
 export const etiquetaMotivo = (v) => MOTIVOS.find(m => m.valor === v)?.etiqueta || v || "";
 export const etiquetaArea = (v) => AREAS.find(a => a.valor === v)?.etiqueta || v || "";
+
+// ── Revisión de clientes (SQL 034): campo de pantalla → código de core.destinatarios.campos_corregir
+export const CAMPOS_CLIENTE_REVISION = [
+  { k: "nombre",       codigo: "NOMBRE",       titulo: "Nombre" },
+  { k: "direccion",    codigo: "DIRECCION",    titulo: "Dirección" },
+  { k: "telefono",     codigo: "TELEFONO",     titulo: "Teléfono" },
+  { k: "ciudad",       codigo: "CIUDAD",       titulo: "Ciudad" },
+  { k: "departamento", codigo: "DEPARTAMENTO", titulo: "Departamento" },
+];
+export const nombreCampos = (codigos = []) =>
+  CAMPOS_CLIENTE_REVISION.filter(c => codigos.includes(c.codigo)).map(c => c.titulo).join(", ");

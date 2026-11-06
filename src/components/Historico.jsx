@@ -35,6 +35,7 @@ const COL_SOL = [
   { key: "total_unidades", titulo: "Unidades", w: 90, num: true },
   { key: "lote_numero", titulo: "Bloque", w: 140 },
   { key: "consentimiento", titulo: "Consentimiento", w: 150 },   // 29-oct
+  { key: "observacion_general", titulo: "Observación general", w: 240 },   // 06-nov
 ];
 const valorSol = (s, k) => k === "fecha" ? fechaHoraBogota(s.radicada_at)
   : k === "estado" ? uiEstado(s.estado_codigo, s.estado_nombre).label

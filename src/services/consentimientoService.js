@@ -1,6 +1,6 @@
 // ── consentimientoService.js ─────────────────────────────────────────────
 // Alerta de inventario que el solicitante acepta ANTES de cargar un pedido
-// (Carga de pedidos: plantilla Excel o PDF). SQL 032.
+// (Carga de pedidos: plantilla Excel o PDF; registro manual desde el SQL 034). SQL 032.
 //  · El texto viene de la base (despachos.consentimiento_textos, versión vigente).
 //  · La aceptación se guarda en despachos.consentimientos con el texto exacto.
 //  · Al radicar, se enlaza con la solicitud DSE-… (fn_vincular_consentimiento).
