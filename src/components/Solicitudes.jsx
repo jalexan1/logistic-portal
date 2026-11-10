@@ -7,7 +7,8 @@
 //  · solicitante → ve las suyas ("Mis solicitudes")
 //  · operador / consulta / admin → ve todas las de su cuenta
 //
-// Solo hay DOS estados: RADICADA → PROCESADA.
+// Estados: RADICADA → PROCESADA, o RADICADA → ANULADA (10-nov, SQL 035: motivo
+// obligatorio de más de 10 caracteres; solicitante solo las suyas, operador/admin todas).
 // PROCESAMIENTO POR BLOQUE (operador / admin):
 //   1. Se marcan las solicitudes radicadas con la casilla de la derecha.
 //   2. "Procesar bloque" abre la confirmación con el resumen.
@@ -22,7 +23,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useAuth } from "./auth/authContext";
 import {
   listarLineasSolicitudes, obtenerEventos,
-  procesarLote, listarLotes, obtenerLineasLote, revertirLote, nuevaLlave,
+  procesarLote, listarLotes, obtenerLineasLote, revertirLote, nuevaLlave, anularSolicitud,
 } from "../services/solicitudesService";
 import { COLUMNAS_LINEAS, filtrarLineas, valorCelda } from "../utils/tablaLineas";
 import Paginador from "./Paginador";
@@ -36,14 +37,30 @@ import { cargarParametros, diasRango, PARAMETROS_DEFECTO } from "../services/par
 const ESTADO_UI = {
   RADICADA:  { label: "Radicada",  color: "#2563EB", bg: "#EFF6FF" },
   PROCESADA: { label: "Procesada", color: "#0F6E56", bg: "#E1F5EE" },
+  ANULADA:   { label: "Anulada",   color: "#C0392B", bg: "#FFF0EE" },   // 10-nov
 };
 // Estados anteriores: solo para mostrar el historial de solicitudes viejas
 const ESTADO_HISTORICO = {
   EN_ALISTAMIENTO: { label: "En alistamiento", color: "#6B7280", bg: "#F3F4F6" },
   DESPACHADA:      { label: "Despachada",      color: "#6B7280", bg: "#F3F4F6" },
   ENTREGADA:       { label: "Entregada",       color: "#6B7280", bg: "#F3F4F6" },
-  ANULADA:         { label: "Anulada",         color: "#C0392B", bg: "#FFF0EE" },
 };
+
+// 10-nov: observación corta en la tabla → primera palabra + «ver más»; completa al pasar el mouse
+const MIN_MOTIVO_ANULAR = 11;   // «más de 10 caracteres»
+function ObsCorta({ texto, onVerMas }) {
+  const t = String(texto || "").trim();
+  if (!t) return <span style={{ color: "#C9D6D0" }}>—</span>;
+  const primera = t.split(/\s+/)[0];
+  const corto = primera.length > 8 ? primera.slice(0, 7) : primera;
+  if (corto === t) return <span title={t}>{t}</span>;
+  return (
+    <span title={t} style={{ display: "inline-flex", alignItems: "baseline", gap: 4, maxWidth: "100%" }}>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{corto}…</span>
+      <button type="button" onClick={onVerMas} style={{ border: "none", background: "none", padding: 0, fontSize: 11, fontWeight: 600, color: "#0F6E56", cursor: "pointer", textDecoration: "underline", whiteSpace: "nowrap" }}>ver más</button>
+    </span>
+  );
+}
 const uiEstado = (codigo, nombre) =>
   ESTADO_UI[codigo] || ESTADO_HISTORICO[codigo] || { label: nombre || codigo, color: "#44574F", bg: "#F2F8F5" };
 
@@ -86,6 +103,7 @@ export default function Solicitudes({ isMobile }) {
   const puedeOperar = rol === "operador" || rol === "admin";
   const esAdmin = rol === "admin";
   const esSolicitante = rol === "solicitante";
+  const puedeAnular = puedeOperar || esSolicitante;   // el solicitante solo ve (y anula) las suyas
   const veBloques = !esSolicitante;
 
   // Quien procesa abre la bandeja en "Radicada": lo pendiente por procesar
@@ -119,6 +137,11 @@ export default function Solicitudes({ isMobile }) {
   const [reversion, setReversion] = useState(null); // lote a revertir
   const [motivo, setMotivo]     = useState("");
   const [revirtiendo, setRevirtiendo] = useState(false);
+  // 10-nov: anular solicitud y ver observación completa
+  const [anulacion, setAnulacion] = useState(null);  // solicitud a anular
+  const [motivoAnular, setMotivoAnular] = useState("");
+  const [anulando, setAnulando] = useState(false);
+  const [verObs, setVerObs] = useState(null);         // { titulo, numero, texto }
 
   const aviso = (m) => { setToast(m); setTimeout(() => setToast(""), 4000); };
   const rangoInvalido = Boolean(filtros.desde && filtros.hasta && filtros.desde > filtros.hasta);
@@ -285,11 +308,25 @@ export default function Solicitudes({ isMobile }) {
     finally { setRevirtiendo(false); }
   };
 
+  const confirmarAnulacion = async () => {
+    const m = motivoAnular.replace(/\s+/g, " ").trim();
+    if (m.length < MIN_MOTIVO_ANULAR) { aviso(`⚠ El motivo debe tener más de 10 caracteres (lleva ${m.length})`); return; }
+    setAnulando(true);
+    try {
+      await anularSolicitud({ solicitudId: anulacion.id, motivo: m });
+      aviso(`✓ ${anulacion.numero} anulada`);
+      setSel(prev => { const n = new Set(prev); n.delete(anulacion.id); return n; });
+      setAnulacion(null); setMotivoAnular("");
+      cargar();
+    } catch (e) { aviso("⚠ " + e.message); }
+    finally { setAnulando(false); }
+  };
+
   const campo = { height: 36, padding: "0 10px", fontSize: 13, border: "1px solid #D4E5DE", borderRadius: 8, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box" };
   const th = { padding: "8px 8px", fontSize: 10, fontWeight: 600, color: "#6B8F80", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap", background: "#F7FCF9" };
   const tdC = { padding: "7px 8px", fontSize: 12, color: "#1a2e27", borderBottom: "1px solid #F0F5F3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
   const filtroInput = { width: "100%", height: 26, padding: "0 6px", fontSize: 11, border: "1px solid #D4E5DE", borderRadius: 6, background: "#fff", color: "#1a2e27", outline: "none", boxSizing: "border-box" };
-  const ANCHO_CASILLA = 46, ANCHO_ACCIONES = puedeOperar ? 214 : 132;
+  const ANCHO_CASILLA = 46, ANCHO_ACCIONES = puedeOperar ? 286 : puedeAnular ? 200 : 132;
   const anchoTabla = (puedeOperar ? ANCHO_CASILLA : 0) + COLUMNAS_LINEAS.reduce((a, c) => a + c.w, 0) + ANCHO_ACCIONES;
   // La casilla queda fija a la izquierda al desplazar la tabla
   const fijaIzq = (fondo) => ({ position: "sticky", left: 0, zIndex: 1, background: fondo, boxShadow: "1px 0 0 #E2EDE9" });
@@ -411,8 +448,13 @@ export default function Solicitudes({ isMobile }) {
                               <AdjuntosBoton adjuntos={f.adjuntos || []} numero={f.numero} onError={aviso} />
                             </td>
                           );
+                          if (c.obs) return (
+                            <td key={c.key} style={{ ...tdC, borderTop: bordeSup }}>
+                              <ObsCorta texto={v} onVerMas={() => setVerObs({ titulo: c.titulo, numero: f.numero, texto: v })} />
+                            </td>
+                          );
                           if (c.key === "estado") return (
-                            <td key={c.key} style={{ ...tdC, borderTop: bordeSup }}><span title={f.lote_numero ? `Bloque ${f.lote_numero}` : ""} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "2px 9px", borderRadius: 20 }}>{est.label}</span></td>
+                            <td key={c.key} style={{ ...tdC, borderTop: bordeSup }}><span title={f.estado_codigo === "ANULADA" && f.motivo_anulacion ? `Motivo de anulación: ${f.motivo_anulacion}` : f.lote_numero ? `Bloque ${f.lote_numero}` : ""} style={{ fontSize: 11, fontWeight: 600, color: est.color, background: est.bg, padding: "2px 9px", borderRadius: 20 }}>{est.label}</span></td>
                           );
                           return (
                             <td key={c.key} title={String(v)} style={{ ...tdC, borderTop: bordeSup, textAlign: c.num ? "right" : "left", fontWeight: c.fuerte ? 700 : 400, color: c.fuerte ? "#0F6E56" : (v === "" ? "#C9D6D0" : "#1a2e27") }}>
@@ -427,6 +469,10 @@ export default function Solicitudes({ isMobile }) {
                               {puedeOperar && esRadicada && (
                                 <button onClick={() => abrirBloque([solicitudes.get(f.solicitud_id)])} title={`Procesar solo ${f.numero}`}
                                   style={{ ...btnFila, background: "#0F6E56", color: "#fff", borderColor: "#0F6E56" }}>Procesar</button>
+                              )}
+                              {puedeAnular && esRadicada && (
+                                <button onClick={() => { setAnulacion(solicitudes.get(f.solicitud_id)); setMotivoAnular(""); }} title={`Anular ${f.numero} (pide el motivo)`}
+                                  style={{ ...btnFila, color: "#C0392B", borderColor: "#F5C6C0" }}>Anular</button>
                               )}
                             </span>
                           )}
@@ -586,6 +632,47 @@ export default function Solicitudes({ isMobile }) {
               <button onClick={() => setReversion(null)} disabled={revirtiendo} style={btnSec}>Cancelar</button>
               <button onClick={confirmarReversion} disabled={revirtiendo} style={{ ...btnSec, background: "#C0392B", color: "#fff", borderColor: "transparent" }}>{revirtiendo ? "Revirtiendo…" : "Revertir bloque"}</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Anular solicitud (10-nov) ── */}
+      {anulacion && (() => {
+        const largo = motivoAnular.replace(/\s+/g, " ").trim().length;
+        const ok = largo >= MIN_MOTIVO_ANULAR;
+        return (
+          <div onClick={() => !anulando && setAnulacion(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(10,30,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, padding: "22px 24px" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#9B1C1C", marginBottom: 6 }}>Anular solicitud {anulacion.numero}</div>
+              <div style={{ fontSize: 12.5, color: "#44574F", marginBottom: 12, lineHeight: 1.5 }}>
+                {anulacion.area_solicitante} · {anulacion.solicitante_nombre} · {plural(anulacion.total_lineas, "línea", "líneas")} · {num(anulacion.total_unidades)} unidades.<br />
+                Pasará de <b>Radicada</b> a <b>Anulada</b>: no se podrá procesar ni volver a Radicada. Queda registrada en la línea de tiempo con su motivo.
+              </div>
+              <textarea value={motivoAnular} onChange={e => setMotivoAnular(e.target.value)} rows={3} maxLength={500} disabled={anulando} autoFocus
+                placeholder="Motivo de la anulación (obligatorio, más de 10 caracteres). Ej.: El cliente canceló el pedido por teléfono"
+                style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${ok || !largo ? "#D4E5DE" : "#E5B935"}`, background: ok || !largo ? "#fff" : "#FFFBEB", borderRadius: 8, padding: 10, fontSize: 13, fontFamily: "inherit", resize: "vertical" }} />
+              <div style={{ fontSize: 11, color: ok ? "#0F6E56" : "#B45309", margin: "4px 0 14px", textAlign: "right" }}>
+                {ok ? "✓ Motivo válido" : `${largo} de ${MIN_MOTIVO_ANULAR} caracteres mínimos`}
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setAnulacion(null)} disabled={anulando} style={btnSec}>Cancelar</button>
+                <button onClick={confirmarAnulacion} disabled={anulando || !ok}
+                  style={{ ...btnSec, background: ok ? "#C0392B" : "#E8B4AE", color: "#fff", borderColor: "transparent", cursor: anulando ? "wait" : ok ? "pointer" : "not-allowed" }}>
+                  {anulando ? "Anulando…" : "Anular solicitud"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Observación completa (10-nov) ── */}
+      {verObs && (
+        <div onClick={() => setVerObs(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(10,30,24,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, padding: "20px 22px" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a2e27" }}>{verObs.titulo} · {verObs.numero}</div>
+            <div style={{ fontSize: 13.5, color: "#1a2e27", marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#F7FCF9", border: "1px solid #E2EDE9", borderRadius: 10, padding: "10px 12px", maxHeight: "50vh", overflow: "auto" }}>{verObs.texto}</div>
+            <div style={{ textAlign: "right", marginTop: 14 }}><button onClick={() => setVerObs(null)} style={btnSec}>Cerrar</button></div>
           </div>
         </div>
       )}

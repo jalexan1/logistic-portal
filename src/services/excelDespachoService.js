@@ -35,17 +35,18 @@ export const COLUMNAS_DESPACHO = [
   { titulo: "MOTIVO",              campo: "motivo",       ancho: 14 },   // 28-oct: al final
 ];
 
+// 10-nov: «Motivo» pasa a la PRIMERA columna en CARGA A WMS, CARGA LIBRO 1 y TABLERO CONTROL
 const COLUMNAS_WMS = [
+  ["Motivo", "motivo", 14],
   ["Entrega", "entrega", 16], ["Destinatario (NIT)", "nit", 16], ["Nombre destinatario", "nombre", 32],
   ["Ciudad", "ciudad", 16], ["Ean", "ean", 16], ["Cantidad entrega", "cantidad", 14],
   ["UM", "um", 6], ["item", "item", 8], ["bodega", "bodega", 8],
-  ["Motivo", "motivo", 14],   // 28-oct: al final (no mueve las columnas que lee el WMS)
 ];
 
 const COLUMNAS_LIBRO1 = [
+  ["Motivo", 14],
   ["ENTREGA", 16], ["SKU", 8], ["CANTIDAD", 10], ["Destinatario (NIT)", 16], ["Nombre destinatario", 32],
   ["Direccion", 28], ["Telefono", 16], ["Ciudad", 16], ["Departamento", 16],
-  ["Motivo", 14],             // 28-oct: al final
 ];
 
 const texto = (v) => (v === null || v === undefined ? "" : String(v));
@@ -78,7 +79,8 @@ export function normalizarLinea(l, enc = {}) {
     um:           texto(l.um || "BUL"),
     item:         itemValor(l.item),
     bodega:       texto(l.bodega),
-    observaciones: texto(l.observaciones),
+    observaciones: texto(l.observaciones ?? l.observacion_linea),           // observación de la línea
+    observacionGeneral: texto(l.observacion_general),                      // 10-nov: observación del pedido
     motivo:       etiquetaMotivo(l.proceso ?? enc.proceso),
     consentimiento: l.consentimiento_at ? "Aceptado " + fechaHoraBogota(l.consentimiento_at) : "",
   };
@@ -86,8 +88,12 @@ export function normalizarLinea(l, enc = {}) {
 
 // ── Hojas ────────────────────────────────────────────────────────────────
 export function hojaDespacho(lineas, { conSolicitud = false, conConsentimiento = false } = {}) {
+  // Bloque / histórico: N° SOLICITUD y, enseguida, las dos observaciones (10-nov)
   let cols = conSolicitud
-    ? [COLUMNAS_DESPACHO[0], { titulo: "N° SOLICITUD", campo: "numero", ancho: 18 }, ...COLUMNAS_DESPACHO.slice(1)]
+    ? [COLUMNAS_DESPACHO[0], { titulo: "N° SOLICITUD", campo: "numero", ancho: 18 },
+       { titulo: "OBSERVACION PEDIDO", campo: "observacionGeneral", ancho: 34 },
+       { titulo: "OBSERVACION LINEA", campo: "observaciones", ancho: 34 },
+       ...COLUMNAS_DESPACHO.slice(1)]
     : COLUMNAS_DESPACHO;
   // Histórico: constancia de la alerta de inventario (al final, después de MOTIVO)
   if (conConsentimiento) cols = [...cols, { titulo: "CONSENTIMIENTO INVENTARIO", campo: "consentimiento", ancho: 26 }];
@@ -114,7 +120,7 @@ export function filasLibro1(lineas) {
     if (!g.departamento && l.departamento) g.departamento = l.departamento;
     grupos.set(k, g);
   });
-  return [...grupos.values()].map(g => [g.entrega, g.skus.size, g.total, g.nit, g.nombre, g.direccion, g.telefono, g.ciudad, g.departamento, g.motivo]);
+  return [...grupos.values()].map(g => [g.motivo, g.entrega, g.skus.size, g.total, g.nit, g.nombre, g.direccion, g.telefono, g.ciudad, g.departamento]);
 }
 
 export function hojaLibro1(lineas) {
@@ -183,10 +189,11 @@ export function descargarExcelPlantilla({ area, numero, lineas }) {
 //   DESPACHO · CARGA A WMS · CARGA LIBRO 1 · TABLERO CONTROL
 // TABLERO CONTROL: una fila por línea del pedido (FACTURA = Entrega).
 const COLUMNAS_TABLERO = [
+  ["MOTIVO", "motivo", 14],   // 10-nov: primera columna
   ["FECHA Y HORA", "fechaHora", 17], ["FACTURA", "entrega", 16], ["NIT", "nit", 14],
   ["NOMBRE", "nombre", 32], ["SKU", "sku", 16], ["CANTIDAD", "cantidad", 10],
   ["DIRECCION", "direccion", 30], ["TELEFONO", "telefono", 15], ["CIUDAD", "ciudad", 16],
-  ["DEPARTAMENTO", "departamento", 16], ["MOTIVO", "motivo", 14],   // 28-oct: al final
+  ["DEPARTAMENTO", "departamento", 16],
 ];
 export function hojaTablero(lineas) {
   const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_TABLERO.map(c => c[0]), ...lineas.map(l => COLUMNAS_TABLERO.map(c => l[c[1]] ?? ""))]);

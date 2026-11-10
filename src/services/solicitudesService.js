@@ -99,7 +99,7 @@ export async function listarLineasSolicitudes({ desde, hasta, estado, tope = 500
   const todas = [];
   for (let ini = 0; ini < tope; ini += PAGINA) {
     let q = despachos().from("vw_solicitud_lineas")
-      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega,proceso,consentimiento_at,observaciones,observacion_general")
+      .select("solicitud_id,numero,estado_codigo,estado_nombre,origen,area_solicitante,solicitante_nombre,solicitante_correo,numero_pedido_origen,radicada_at,lote_numero,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_direccion,destinatario_ciudad,destinatario_departamento,destinatario_telefono,material,ean,cantidad,um,item,bodega,proceso,consentimiento_at,observaciones,observacion_general,motivo_anulacion")
       .order("radicada_at", { ascending: false }).order("solicitud_id", { ascending: false }).order("linea_nro")
       .range(ini, ini + PAGINA - 1);
     if (desde) q = q.gte("fecha_radicacion", desde);
@@ -158,7 +158,7 @@ export async function obtenerLineasLote(loteId) {
   const todas = [];
   for (let desde = 0; ; desde += PAGINA) {
     const { data, error } = await despachos().from("vw_lote_lineas")
-      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega,solicitante_correo,ean,destinatario_direccion,destinatario_departamento,destinatario_telefono,proceso")
+      .select("solicitud_id,solicitud_numero,area_solicitante,solicitante_nombre,origen,numero_pedido_origen,radicada_at,linea_id,linea_nro,entrega,destinatario_nit,destinatario_nombre,destinatario_ciudad,material,producto_descripcion,cantidad,um,item,bodega,solicitante_correo,ean,destinatario_direccion,destinatario_departamento,destinatario_telefono,proceso,observacion_linea,observacion_general")
       .eq("lote_id", loteId)
       .order("solicitud_numero").order("linea_nro").order("linea_id")
       .range(desde, desde + PAGINA - 1);
@@ -170,6 +170,16 @@ export async function obtenerLineasLote(loteId) {
 }
 
 /** Solo administrador: devuelve a RADICADA todas las solicitudes del bloque. */
+/**
+ * 10-nov (SQL 035): anula una solicitud RADICADA. Motivo obligatorio de más de 10 caracteres.
+ * Solicitante: solo las suyas · operador / admin: las de su cuenta. No borra nada.
+ */
+export async function anularSolicitud({ solicitudId, motivo }) {
+  const { data, error } = await despachos().rpc("fn_anular_solicitud", { p_solicitud_id: solicitudId, p_motivo: motivo });
+  if (error) throw new Error(mensajeError(error));
+  return Array.isArray(data) ? data[0] : data;
+}
+
 export async function revertirLote({ loteId, motivo }) {
   const { data, error } = await despachos().rpc("fn_revertir_lote", { p_lote_id: loteId, p_motivo: motivo });
   if (error) throw new Error(mensajeError(error));

@@ -10,7 +10,7 @@ import { fechaHoraBogota } from "./fechas";
 export const ESTADO_UI = {
   RADICADA:  { label: "Radicada",  color: "#2563EB", bg: "#EFF6FF" },
   PROCESADA: { label: "Procesada", color: "#0F6E56", bg: "#E1F5EE" },
-  ANULADA:   { label: "Anulada",   color: "#C0392B", bg: "#FFF0EE" },   // solo históricas
+  ANULADA:   { label: "Anulada",   color: "#C0392B", bg: "#FFF0EE" },   // 10-nov: se anula con motivo (SQL 035)
 };
 export const uiEstado = (codigo, nombre) =>
   ESTADO_UI[codigo] || { label: nombre || codigo, color: "#6B8F80", bg: "#F2F8F5" };
@@ -19,6 +19,9 @@ export const uiEstado = (codigo, nombre) =>
 export const COLUMNAS_LINEAS = [
   { key: "fecha",                     titulo: "Fecha y hora",        w: 128 },
   { key: "proceso",                   titulo: "Motivo",              w: 100 },   // 28-oct
+  // 10-nov: observaciones junto al motivo; se muestra la primera palabra y «ver más» (texto completo al pasar el mouse)
+  { key: "observacion_general",       titulo: "Obs. pedido",         w: 122, obs: true },
+  { key: "observaciones",             titulo: "Obs. línea",          w: 122, obs: true },
   { key: "adjuntos",                  titulo: "Adjunto",             w: 84, centro: true },  // 28-oct: 📎 n
   { key: "numero",                    titulo: "N° solicitud",        w: 132, fuerte: true },
   { key: "estado",                    titulo: "Estado",              w: 104 },
@@ -41,8 +44,6 @@ export const COLUMNAS_LINEAS = [
   { key: "origen",                    titulo: "Origen",              w: 70 },
   { key: "lote_numero",               titulo: "Bloque",              w: 140 },
   { key: "consentimiento",            titulo: "Consentimiento",      w: 150 },   // 29-oct: alerta de inventario aceptada
-  { key: "observaciones",             titulo: "Observación línea",   w: 200 },   // 06-nov
-  { key: "observacion_general",       titulo: "Observación general", w: 240 },   // 06-nov: popup antes de radicar
 ];
 
 export const valorCelda = (f, key) =>
