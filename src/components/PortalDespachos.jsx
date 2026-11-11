@@ -722,9 +722,14 @@ function CargaPedido({ modo = "CARGA", meta, showToast, onRadicada, onNuevo }) {
   const duplicarLinea = (idx) => { if (solicitudYaGenerada) return; setPdfRows(prev => { const n = [...prev]; n.splice(idx + 1, 0, { ...prev[idx] }); return n; }); setRowErrors({}); };
   const eliminarLinea = (idx) => {
     if (solicitudYaGenerada) return;
+    // 11-nov: también en carga por PDF. Ahí la última línea no se borra: para descartar el pedido se usa «Limpiar».
+    if (!esManual && pdfRows.length === 1) { if (showToast) showToast("⚠ Es la única línea del pedido. Para descartarlo use «Limpiar»."); return; }
     setPdfRows(prev => (prev.length === 1 ? [filaVacia()] : prev.filter((_, i) => i !== idx)));
     setRowErrors({});
+    if (!esManual && showToast) showToast(`Línea ${idx + 1} eliminada del pedido`);
   };
+  // Columna de acciones: manual → duplicar y eliminar · PDF (11-nov) → solo eliminar
+  const conAcciones = esManual || origenCarga === "PDF";
 
   // ── Cliente rechazado corregido: se aplica a todas las líneas con ese NIT ──
   const clienteCorregido = (c) => {
@@ -900,7 +905,7 @@ function CargaPedido({ modo = "CARGA", meta, showToast, onRadicada, onNuevo }) {
                   {COLS_VISTA.map(c => <th key={c.key} style={{ width:c.w, padding:"8px 8px", fontSize:11, color:"#6B8F80", fontWeight:500, textAlign:c.numeric?"right":"left", borderBottom:"1px solid #E2EDE9", whiteSpace:"nowrap" }}>
                     {c.label}{OBLIGATORIOS.includes(c.key) && <span style={{ color:"#C0392B" }}> *</span>}
                   </th>)}
-                  {esManual && <th style={{ width:60, borderBottom:"1px solid #E2EDE9" }} />}
+                  {conAcciones && <th style={{ width: esManual ? 60 : 40, borderBottom:"1px solid #E2EDE9" }} />}
                 </tr></thead>
                 <tbody>
                   {esManual && pdfRows.length === 0 && (
@@ -943,13 +948,13 @@ function CargaPedido({ modo = "CARGA", meta, showToast, onRadicada, onNuevo }) {
                           )}
                         </div>
                       </td>); })}
-                    {esManual && (
+                    {conAcciones && (
                       <td style={{ padding:"3px 6px" }}>
                         <div style={{ display:"flex", gap:2, justifyContent:"center" }}>
                           {[
-                            { label:"⎘", title:"Duplicar", fn:() => duplicarLinea(idx), hover:{ bg:"#E1F5EE", color:"#0F6E56" } },
-                            { label:"×", title:"Eliminar", fn:() => eliminarLinea(idx), hover:{ bg:"#FFF0EE", color:"#C0392B" }, big:true },
-                          ].map(b => (
+                            esManual && { label:"⎘", title:"Duplicar", fn:() => duplicarLinea(idx), hover:{ bg:"#E1F5EE", color:"#0F6E56" } },
+                            { label:"×", title:"Eliminar línea", fn:() => eliminarLinea(idx), hover:{ bg:"#FFF0EE", color:"#C0392B" }, big:true },
+                          ].filter(Boolean).map(b => (
                             <button key={b.title} type="button" title={b.title} onClick={b.fn} disabled={solicitudYaGenerada}
                               style={{ width:26, height:26, border:"none", background:"none", cursor:"pointer", borderRadius:5, color:"#9CB8AE", fontSize:b.big?16:13, display:"flex", alignItems:"center", justifyContent:"center" }}
                               onMouseEnter={e => { e.currentTarget.style.background=b.hover.bg; e.currentTarget.style.color=b.hover.color; }}
