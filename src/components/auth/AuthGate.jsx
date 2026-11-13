@@ -8,6 +8,7 @@ import {
   obtenerSesion, escucharSesion, cargarContextoUsuario, cerrarSesion, vigilarInactividad,
 } from "../../services/authService";
 import { cargarDestinatarios } from "../../services/clientesService";
+import { cargarMotivos } from "../../services/motivosService";
 import LoginScreen from "./LoginScreen";
 import { PLATAFORMA_URL } from "../../lib/supabase";
 
@@ -33,7 +34,7 @@ export default function AuthGate({ children }) {
       if (u.perfil && u.perfil.activo === false) { await salir("Usuario inactivo. Contacte al administrador."); return; }
       const tieneAcceso = APPS_DE_ESTE_PORTAL.some(a => u.roles[a]);
       if (!tieneAcceso) { setCtx({ session, ...u }); setEstado("sin-acceso"); return; }
-      if (u.roles.DESPACHOS) await cargarDestinatarios();
+      if (u.roles.DESPACHOS) await Promise.all([cargarDestinatarios(), cargarMotivos()]);   // 12-nov: motivos desde la base (SQL 036)
       setCtx({ session, ...u });
       setEstado("listo");
     } catch (e) {

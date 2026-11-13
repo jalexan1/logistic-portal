@@ -82,17 +82,42 @@ export const AREAS = [
   { valor: "GERENCIA",   etiqueta: "Gerencia" },
 ];
 // Motivo (antes "Proceso"; se guarda en la columna proceso)
+// 12-nov (SQL 036): la fuente es el catálogo despachos.motivos (se carga al iniciar sesión
+// con cargarMotivos). Esta lista es el RESPALDO por si la tabla aún no existe o falla la red:
+// mismo orden y nombres del 036. valor = código en BD (MAYÚSCULAS, sin tildes) · etiqueta = pantalla.
 export const MOTIVOS = [
-  { valor: "VARIOS",     etiqueta: "Varios" },
-  { valor: "RAPPI",      etiqueta: "Rappi" },
+  { valor: "RETAIL",     etiqueta: "Retail" },
+  { valor: "MAQUINAS",   etiqueta: "Máquinas" },
   { valor: "LUEGO PAGO", etiqueta: "Luego Pago" },
   { valor: "FARMATODO",  etiqueta: "Farmatodo" },
+  { valor: "RAPPI",      etiqueta: "Rappi" },
   { valor: "MP",         etiqueta: "MP" },
+  { valor: "EMPLEADO",   etiqueta: "Empleado" },
+  { valor: "RIONEGRO",   etiqueta: "Rionegro" },
+  { valor: "MELON",      etiqueta: "Melón" },
+  { valor: "TRASLADO",   etiqueta: "Traslado" },
+  { valor: "VARIOS",     etiqueta: "Varios" },
 ];
 // Motivos SIN datos de cliente: NIT, nombre, dirección, teléfono, ciudad y
 // departamento no se exigen y se llenan con la palabra del motivo.
+// Todos los demás siguen la regla de Varios (todos los campos obligatorios).
 export const MOTIVOS_SIN_CLIENTE = ["LUEGO PAGO", "FARMATODO"];
-export const etiquetaMotivo = (v) => MOTIVOS.find(m => m.valor === v)?.etiqueta || v || "";
+// Nombres de TODOS los motivos (también inactivos) para mostrar solicitudes viejas
+const NOMBRE_MOTIVO = new Map(MOTIVOS.map(m => [m.valor, m.etiqueta]));
+
+/**
+ * Reemplaza las listas con lo que viene de despachos.motivos (las listas se
+ * modifican en el mismo arreglo para que todos los módulos vean el cambio).
+ * filas: [{ codigo, nombre, orden, sin_cliente, activo }]
+ */
+export function aplicarMotivos(filas = []) {
+  if (!Array.isArray(filas) || !filas.length) return;
+  const ordenadas = [...filas].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+  ordenadas.forEach(m => NOMBRE_MOTIVO.set(m.codigo, m.nombre));
+  MOTIVOS.splice(0, MOTIVOS.length, ...ordenadas.filter(m => m.activo !== false).map(m => ({ valor: m.codigo, etiqueta: m.nombre })));
+  MOTIVOS_SIN_CLIENTE.splice(0, MOTIVOS_SIN_CLIENTE.length, ...ordenadas.filter(m => m.sin_cliente).map(m => m.codigo));
+}
+export const etiquetaMotivo = (v) => NOMBRE_MOTIVO.get(v) || v || "";
 export const etiquetaArea = (v) => AREAS.find(a => a.valor === v)?.etiqueta || v || "";
 
 // ── Revisión de clientes (SQL 034): campo de pantalla → código de core.destinatarios.campos_corregir
