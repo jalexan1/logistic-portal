@@ -29,6 +29,7 @@ import { coincide, nombreCampos } from "../utils/tablaLineas";
 
 // Campos que el supervisor puede marcar al rechazar (códigos de core.destinatarios.campos_corregir)
 const CAMPOS_RECHAZO = [
+  { titulo: "NIT", codigos: ["NIT"] },          // 17-nov (SQL 037)
   { titulo: "Nombre", codigos: ["NOMBRE"] },
   { titulo: "Dirección", codigos: ["DIRECCION"] },
   { titulo: "Teléfono", codigos: ["TELEFONO"] },

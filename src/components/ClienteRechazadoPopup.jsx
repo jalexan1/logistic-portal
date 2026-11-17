@@ -18,6 +18,8 @@ import { CAMPOS_CLIENTE_REVISION as CAMPOS, nombreCampos } from "../utils/tablaL
 
 const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toUpperCase();
 const tel = (v) => String(v ?? "").replace(/[^0-9+]/g, "");
+// NIT sin puntos ni dígito de verificación (misma regla de core.fn_nit_base)
+const nitBase = (v) => { const x = String(v ?? "").split("-")[0].replace(/[^0-9]/g, ""); return /^[89][0-9]{9}$/.test(x) ? x.slice(0, 9) : x; };
 
 export default function ClienteRechazadoPopup({ nit, onCorregido, onCerrar }) {
   const c = BD_CLIENTES[String(nit).trim()] || {};
@@ -29,7 +31,7 @@ export default function ClienteRechazadoPopup({ nit, onCorregido, onCerrar }) {
   const todos = marcados.size === 0;          // rechazado sin campos marcados (flujo anterior): revisar todo
   const editable = (k) => { const x = CAMPOS.find(y => y.k === k); return Boolean(x) && (todos || marcados.has(x.codigo)); };
 
-  const [d, setD] = useState({ nombre: c.nombre || "", direccion: c.direccion || "", telefono: c.telefono || "", ciudad: c.ciudad || "", departamento: c.departamento || "" });
+  const [d, setD] = useState({ nit: String(nit), nombre: c.nombre || "", direccion: c.direccion || "", telefono: c.telefono || "", ciudad: c.ciudad || "", departamento: c.departamento || "" });
   const [error, setError] = useState("");
   const [faltan, setFaltan] = useState({});
   const [guardando, setGuardando] = useState(false);
@@ -49,7 +51,14 @@ export default function ClienteRechazadoPopup({ nit, onCorregido, onCerrar }) {
     e.preventDefault();
     const vacios = Object.fromEntries(CAMPOS.map(x => [x.k, !String(d[x.k] || "").trim()]));
     if (Object.values(vacios).some(Boolean)) { setFaltan(vacios); setError("Complete los campos marcados."); return; }
-    const igual = (k) => k === "telefono" ? tel(d[k]) === tel(c[k]) : norm(d[k]) === norm(c[k]);
+    const original = { ...c, nit };
+    const igual = (k) => k === "telefono" ? tel(d[k]) === tel(original[k])
+      : k === "nit" ? norm(d.nit) === norm(nit) || nitBase(d.nit) === nitBase(nit)
+      : norm(d[k]) === norm(original[k]);
+    // 17-nov: NIT corregido → mínimo 5 dígitos (sin puntos ni dígito de verificación)
+    if (editable("nit") && !igual("nit") && nitBase(d.nit).length < 5) {
+      setFaltan({ nit: true }); setError("Digite un NIT válido: mínimo 5 dígitos, sin puntos ni dígito de verificación."); return;
+    }
     if (!todos) {
       const sinCambio = CAMPOS.filter(x => marcados.has(x.codigo) && x.k !== "departamento" && igual(x.k)
         && !(x.k === "ciudad" && !igual("departamento")));
@@ -62,7 +71,8 @@ export default function ClienteRechazadoPopup({ nit, onCorregido, onCerrar }) {
       setError("No cambió ningún dato. Corrija lo que indica la nota de la revisión."); return;
     }
     setGuardando(true); setError("");
-    try { onCorregido(await corregirClienteRechazado({ nit, ...d })); }
+    const { nit: nitDigitado, ...resto } = d;
+    try { onCorregido(await corregirClienteRechazado({ nit, ...resto, nitNuevo: editable("nit") && !igual("nit") ? nitDigitado : null })); }
     catch (err) { setError(err.message); }
     finally { setGuardando(false); }
   };
@@ -102,7 +112,7 @@ export default function ClienteRechazadoPopup({ nit, onCorregido, onCerrar }) {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 10 }}>
-            <label style={lbl}>NIT<input value={nit} readOnly style={{ ...input("x"), background: "#F2F8F5", color: "#6B8F80", border: "1px solid #D4E5DE" }} /></label>
+            <label style={lbl}>{etiqueta("nit", "NIT")}<input value={d.nit} inputMode="numeric" readOnly={!editable("nit")} onChange={e => cambiar("nit", e.target.value)} placeholder="900123456" style={input("nit")} /></label>
             <label style={lbl}>{etiqueta("nombre", "Nombre")}<input value={d.nombre} readOnly={!editable("nombre")} onChange={e => cambiar("nombre", e.target.value)} style={input("nombre")} /></label>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginBottom: 10 }}>

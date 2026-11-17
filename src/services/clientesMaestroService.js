@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { core, despachos } from "../lib/supabase";
 import { mensajeError } from "./solicitudesService";
-import { registrarCliente } from "./clientesService";
+import { registrarCliente, BD_CLIENTES } from "./clientesService";
 
 const fila = (data) => (Array.isArray(data) ? data[0] : data);
 
@@ -71,13 +71,16 @@ export async function revisarCliente({ id, accion, nota, campos = null }) {
 }
 
 /** Despachos: corrige un cliente RECHAZADO → vuelve a PENDIENTE y queda disponible en pantalla. */
-export async function corregirClienteRechazado({ nit, nombre, direccion, telefono, ciudad, departamento }) {
+// 17-nov (SQL 037): nitNuevo = NIT corregido (solo si el supervisor marcó el NIT)
+export async function corregirClienteRechazado({ nit, nombre, direccion, telefono, ciudad, departamento, nitNuevo = null }) {
   const { data, error } = await despachos().rpc("fn_corregir_cliente_rechazado", {
     p_nit: nit, p_nombre: nombre || null, p_direccion: direccion || null, p_telefono: telefono || null,
-    p_ciudad: ciudad || null, p_departamento: departamento || null,
+    p_ciudad: ciudad || null, p_departamento: departamento || null, p_nit_nuevo: nitNuevo || null,
   });
   if (error) throw new Error(mensajeError(error));
   const c = fila(data);
+  // Si cambió el NIT, el NIT viejo deja de existir en el maestro de la pantalla
+  if (String(c.nit).trim() !== String(nit).trim()) delete BD_CLIENTES[String(nit).trim()];
   registrarCliente(c.nit, c);       // ya no está rechazado: se puede radicar
   return c;
 }

@@ -120,8 +120,9 @@ export function aplicarMotivos(filas = []) {
 export const etiquetaMotivo = (v) => NOMBRE_MOTIVO.get(v) || v || "";
 export const etiquetaArea = (v) => AREAS.find(a => a.valor === v)?.etiqueta || v || "";
 
-// ── Revisión de clientes (SQL 034): campo de pantalla → código de core.destinatarios.campos_corregir
+// ── Revisión de clientes (SQL 034; NIT desde el 037): campo de pantalla → código de core.destinatarios.campos_corregir
 export const CAMPOS_CLIENTE_REVISION = [
+  { k: "nit",          codigo: "NIT",          titulo: "NIT" },
   { k: "nombre",       codigo: "NOMBRE",       titulo: "Nombre" },
   { k: "direccion",    codigo: "DIRECCION",    titulo: "Dirección" },
   { k: "telefono",     codigo: "TELEFONO",     titulo: "Teléfono" },
