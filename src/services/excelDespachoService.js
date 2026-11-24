@@ -40,7 +40,7 @@ const COLUMNAS_WMS = [
   ["Motivo", "motivo", 14],
   ["Entrega", "entrega", 16], ["Destinatario (NIT)", "nit", 16], ["Nombre destinatario", "nombre", 32],
   ["Ciudad", "ciudad", 16], ["Ean", "ean", 16], ["Cantidad entrega", "cantidad", 14],
-  ["UM", "um", 6], ["item", "item", 8], ["bodega", "bodega", 8],
+  ["UM", "um", 6], ["item", "item", 14], ["bodega", "bodega", 8],   // item = NIT (24-nov)
 ];
 
 const COLUMNAS_LIBRO1 = [
@@ -102,8 +102,13 @@ export function hojaDespacho(lineas, { conSolicitud = false, conConsentimiento =
   return ws;
 }
 
+// 24-nov (actualización de Copérnico): en CARGA A WMS la columna «item» lleva
+// EXACTAMENTE lo mismo que «Destinatario (NIT)», siempre como texto (también si el
+// NIT trae letras). Solo esta hoja: DESPACHO y la base conservan el item guardado.
+const valorWms = (l, campo) => (campo === "item" ? texto(l.nit) : l[campo]);
+
 export function hojaWms(lineas) {
-  const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_WMS.map(c => c[0]), ...lineas.map(l => COLUMNAS_WMS.map(c => l[c[1]]))]);
+  const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_WMS.map(c => c[0]), ...lineas.map(l => COLUMNAS_WMS.map(c => valorWms(l, c[1])))]);
   ws["!cols"] = COLUMNAS_WMS.map(c => ({ wch: c[2] }));
   return ws;
 }
